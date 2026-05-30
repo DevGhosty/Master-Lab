@@ -394,8 +394,8 @@ export async function runMasteringViaApi() {
   // #endregion
 
   try {
-    setStatus(COPY.status.masteringInProgress);
-    setProgress("prepare", 52, "Starting master job");
+    setStatus("Uploading file for mastering… Large tracks may take 1–2 minutes before processing starts.");
+    setProgress("prepare", 52, "Uploading for master");
     await nextFrame();
 
     const controls = readControls();
