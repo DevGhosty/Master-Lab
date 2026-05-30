@@ -276,8 +276,13 @@ export async function extractWaveformPeaks(inputPath, width = 800) {
   return peaks;
 }
 
-export async function masterToFiles(inputPath, workDir, filterChain) {
+export async function masterToFiles(inputPath, workDir, filterChain, onProgress) {
+  const report = (progress, message) => {
+    if (typeof onProgress === "function") onProgress({ progress, message });
+  };
+
   const masteredPath = path.join(workDir, "mastered.wav");
+  report(30, "Applying mastering filter");
   const { code, stderr } = await runCommand("ffmpeg", [
     "-hide_banner",
     "-y",
@@ -292,6 +297,7 @@ export async function masterToFiles(inputPath, workDir, filterChain) {
   if (code !== 0) throw new Error(stderr || "Mastering failed");
 
   const previewPath = path.join(workDir, "preview.wav");
+  report(48, "Creating preview");
   await runCommand("ffmpeg", [
     "-hide_banner",
     "-y",
@@ -305,9 +311,11 @@ export async function masterToFiles(inputPath, workDir, filterChain) {
   ]);
 
   const wav32Path = path.join(workDir, "master-32float.wav");
+  report(58, "Exporting 32-bit WAV");
   await fs.copyFile(masteredPath, wav32Path);
 
   const wav24Path = path.join(workDir, "master-24bit.wav");
+  report(66, "Exporting 24-bit WAV");
   await runCommand("ffmpeg", [
     "-hide_banner",
     "-y",
@@ -319,6 +327,7 @@ export async function masterToFiles(inputPath, workDir, filterChain) {
   ]);
 
   const wav16Path = path.join(workDir, "master-16bit.wav");
+  report(74, "Exporting 16-bit WAV");
   await runCommand("ffmpeg", [
     "-hide_banner",
     "-y",
@@ -330,6 +339,7 @@ export async function masterToFiles(inputPath, workDir, filterChain) {
   ]);
 
   const mp3Path = path.join(workDir, "master-320.mp3");
+  report(82, "Encoding MP3");
   await runCommand("ffmpeg", [
     "-hide_banner",
     "-y",
@@ -342,6 +352,7 @@ export async function masterToFiles(inputPath, workDir, filterChain) {
     mp3Path,
   ]);
 
+  report(86, "Analyzing master");
   const masteredAnalysis = await analyzeMetricsOnly(masteredPath);
 
   return {

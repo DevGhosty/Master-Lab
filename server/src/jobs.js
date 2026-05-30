@@ -55,7 +55,10 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     const filter = buildMasterFilter(preset, controls);
     job.progress = 25;
     job.message = "Rendering master (this can take several minutes)";
-    const result = await masterToFiles(inputPath, job.dir, filter);
+    const result = await masterToFiles(inputPath, job.dir, filter, ({ progress, message }) => {
+      job.progress = progress;
+      job.message = message;
+    });
     job.progress = 88;
     job.message = "Preparing downloads";
     job.files = result.files;
