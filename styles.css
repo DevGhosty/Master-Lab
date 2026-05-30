@@ -1,0 +1,997 @@
+:root {
+  color-scheme: light;
+  --bg: #f5f7f4;
+  --ink: #151817;
+  --muted: #68706c;
+  --line: #d7ddd8;
+  --panel: #ffffff;
+  --panel-2: #eef2ee;
+  --panel-3: #f9faf8;
+  --teal: #0a7b75;
+  --teal-dark: #075f5b;
+  --amber: #d98928;
+  --danger: #b94436;
+  --warning: #a96812;
+  --good: #14745e;
+  --shadow: 0 18px 55px rgba(24, 31, 29, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #101412;
+    --ink: #eef5f0;
+    --muted: #a8b4ae;
+    --line: #2c3934;
+    --panel: #171d1a;
+    --panel-2: #202923;
+    --panel-3: #131916;
+    --teal: #28b9ad;
+    --teal-dark: #4ed4c9;
+    --amber: #eba94f;
+    --danger: #ee7d70;
+    --warning: #e5b15c;
+    --good: #52c8aa;
+    --shadow: 0 18px 55px rgba(0, 0, 0, 0.28);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+button,
+input,
+a {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--teal) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1500px;
+  margin: 0 auto 18px;
+}
+
+.topbar h1,
+.section-heading h2,
+.center-stage h2,
+.export-box h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.topbar h1 {
+  font-size: clamp(1.45rem, 2vw, 2rem);
+  line-height: 1.05;
+}
+
+.topbar p,
+.section-heading p,
+.wave-header p,
+.export-box p,
+.export-box small {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.icon-button,
+.transport-button {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.icon-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  font-size: 1.25rem;
+}
+
+button:disabled,
+.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button:not(:disabled):hover,
+a:not(.disabled):hover {
+  transform: translateY(-1px);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(440px, 1fr) minmax(280px, 340px);
+  gap: 18px;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.panel,
+.center-stage {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.panel {
+  padding: 18px;
+}
+
+.input-panel,
+.meters-panel {
+  display: flex;
+  min-height: calc(100vh - 114px);
+  flex-direction: column;
+  gap: 16px;
+}
+
+.flow-section {
+  display: grid;
+  gap: 14px;
+}
+
+.section-heading {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.section-heading h2 {
+  font-size: 0.96rem;
+  line-height: 1.2;
+}
+
+.step-number {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--teal);
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.dropzone {
+  position: relative;
+  display: grid;
+  min-height: 156px;
+  place-items: center;
+  gap: 7px;
+  padding: 22px;
+  border: 1.5px dashed color-mix(in srgb, var(--muted) 50%, transparent);
+  border-radius: 8px;
+  background: var(--panel-3);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
+}
+
+.dropzone.dragging {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 9%, var(--panel));
+}
+
+.dropzone input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.dropzone strong {
+  font-size: 1rem;
+}
+
+.dropzone small,
+.meter-scale,
+.stat-grid small,
+.analysis-grid dt,
+.progress-steps,
+.preset-button span,
+.warning-item span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.drop-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--teal) 13%, var(--panel));
+  color: var(--teal-dark);
+  font-size: 1.35rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.readiness-badge {
+  width: fit-content;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.readiness-badge.good {
+  border-color: color-mix(in srgb, var(--good) 40%, var(--line));
+  background: color-mix(in srgb, var(--good) 12%, var(--panel));
+  color: var(--good);
+}
+
+.readiness-badge.minor {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--line));
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+  color: var(--warning);
+}
+
+.readiness-badge.major {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  color: var(--danger);
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.analysis-grid div,
+.stat-grid div {
+  display: grid;
+  gap: 4px;
+  min-height: 66px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-3);
+}
+
+.analysis-grid dd {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.warning-list {
+  display: grid;
+  gap: 8px;
+}
+
+.warning-item {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--panel-3);
+}
+
+.warning-item.good {
+  border-left-color: var(--good);
+}
+
+.warning-item.minor {
+  border-left-color: var(--warning);
+}
+
+.warning-item.major {
+  border-left-color: var(--danger);
+}
+
+.warning-item strong {
+  font-size: 0.83rem;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.preset-button {
+  display: grid;
+  gap: 4px;
+  min-height: 74px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-3);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset-button strong {
+  font-size: 0.84rem;
+}
+
+.preset-button.active {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 10%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 40%, transparent);
+}
+
+.group-title,
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.group-title output,
+.group-title span:last-child {
+  color: var(--teal-dark);
+}
+
+.range-row,
+.toggle-row,
+.compare-toggle {
+  display: grid;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.toggle-row,
+.compare-toggle {
+  grid-template-columns: 18px 1fr;
+  align-items: center;
+}
+
+.compare-toggle {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--teal);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--teal);
+}
+
+.progress-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+
+.progress-track div {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--teal), var(--amber));
+  transition: width 220ms ease;
+}
+
+.progress-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.progress-steps li.active {
+  color: var(--teal-dark);
+  font-weight: 850;
+}
+
+.progress-steps li.done {
+  color: var(--good);
+}
+
+.primary-button,
+.download-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--teal);
+  color: white;
+  font-size: 0.94rem;
+  font-weight: 850;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform 150ms ease,
+    background 150ms ease;
+}
+
+.primary-button {
+  width: 100%;
+}
+
+.primary-button:not(:disabled):hover,
+.download-button:not(.disabled):hover {
+  background: var(--teal-dark);
+}
+
+.center-stage {
+  display: grid;
+  min-height: auto;
+  grid-template-rows: auto minmax(170px, 260px) auto auto;
+  overflow: hidden;
+}
+
+.wave-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.center-stage h2,
+.export-box h2 {
+  font-size: 1.08rem;
+  line-height: 1.2;
+}
+
+.preview-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 285px;
+}
+
+.segmented {
+  display: inline-flex;
+  width: 100%;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.segmented button {
+  flex: 1;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 3px 12px rgba(20, 26, 24, 0.12);
+}
+
+.waveform-wrap {
+  position: relative;
+  min-height: 190px;
+  cursor: pointer;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--teal) 9%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--ink) 8%, transparent) 1px, transparent 1px);
+  background-size:
+    72px 100%,
+    100% 52px;
+}
+
+.waveform-wrap:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--teal) 42%, transparent);
+  outline-offset: -3px;
+}
+
+#waveCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 190px;
+}
+
+.playhead {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  display: none;
+  width: 2px;
+  background: var(--danger);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--panel) 75%, transparent);
+  pointer-events: none;
+}
+
+.playhead.visible {
+  display: block;
+}
+
+.empty-wave {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 750;
+}
+
+.empty-wave.hidden {
+  display: none;
+}
+
+.wave-legend {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 8px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.wave-legend span {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.wave-legend i {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.legend-original {
+  background: #0a7b75;
+}
+
+.legend-mastered {
+  background: var(--amber);
+}
+
+.transport {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.transport-button {
+  min-width: 70px;
+  height: 44px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.time-readout {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat-grid strong {
+  font-size: 1.02rem;
+  line-height: 1;
+}
+
+.meter-block {
+  display: grid;
+  gap: 10px;
+}
+
+.meter {
+  height: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--panel-2), var(--panel-2) 55%, color-mix(in srgb, var(--amber) 30%, var(--panel)) 78%, color-mix(in srgb, var(--danger) 30%, var(--panel)));
+}
+
+.meter-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--teal), var(--amber));
+  transition: width 160ms ease;
+}
+
+.meter-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -4px;
+}
+
+.export-box {
+  display: grid;
+  gap: 12px;
+  margin-top: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101514;
+  color: white;
+}
+
+@media (prefers-color-scheme: dark) {
+  .export-box {
+    background: #0b0f0d;
+  }
+}
+
+.export-box p,
+.export-box small {
+  color: #b6c0bc;
+}
+
+.download-stack {
+  display: grid;
+  gap: 9px;
+}
+
+.download-button {
+  width: 100%;
+  background: var(--amber);
+  color: #151817;
+}
+
+.download-button.secondary {
+  background: #e9ece7;
+  color: #151817;
+}
+
+.download-button:not(.disabled):hover {
+  background: #efa244;
+}
+
+.download-button.secondary:not(.disabled):hover {
+  background: #ffffff;
+}
+
+/* Compact mastering-console layout: keep play/master/export visible. */
+.app-shell {
+  padding: 14px;
+}
+
+.topbar {
+  margin-bottom: 10px;
+}
+
+.topbar h1 {
+  font-size: clamp(1.25rem, 1.6vw, 1.65rem);
+}
+
+.topbar p,
+.section-heading p,
+.wave-header p,
+.export-box p,
+.export-box small {
+  font-size: 0.82rem;
+}
+
+.workspace {
+  grid-template-columns: minmax(260px, 320px) minmax(430px, 1fr) minmax(260px, 320px);
+  gap: 12px;
+}
+
+.panel {
+  padding: 12px;
+}
+
+.input-panel,
+.meters-panel {
+  max-height: calc(100vh - 86px);
+  min-height: auto;
+  gap: 10px;
+  overflow: auto;
+}
+
+.flow-section {
+  gap: 9px;
+}
+
+.section-heading {
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+}
+
+.section-heading h2 {
+  font-size: 0.84rem;
+}
+
+.step-number {
+  width: 22px;
+  height: 22px;
+  font-size: 0.7rem;
+}
+
+.dropzone {
+  min-height: 92px;
+  padding: 12px;
+}
+
+.dropzone strong {
+  font-size: 0.9rem;
+}
+
+.drop-icon {
+  width: 32px;
+  height: 32px;
+  font-size: 1rem;
+}
+
+.analysis-grid {
+  gap: 6px;
+}
+
+.analysis-grid div,
+.stat-grid div {
+  min-height: 48px;
+  padding: 8px;
+}
+
+.analysis-grid dd {
+  font-size: 0.78rem;
+}
+
+.warning-list {
+  gap: 6px;
+  max-height: 88px;
+  overflow: auto;
+}
+
+.warning-item {
+  padding: 8px 9px;
+}
+
+.preset-grid {
+  gap: 6px;
+}
+
+.preset-button {
+  min-height: 46px;
+  padding: 8px;
+}
+
+.preset-button strong {
+  font-size: 0.76rem;
+}
+
+.preset-button span {
+  display: none;
+}
+
+.group-title,
+.progress-header {
+  font-size: 0.8rem;
+}
+
+.range-row,
+.toggle-row,
+.compare-toggle {
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.progress-steps {
+  display: none;
+}
+
+.progress-section {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 -12px -12px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.progress-section .primary-button {
+  min-height: 46px;
+}
+
+.center-stage {
+  grid-template-rows: auto minmax(132px, 180px) auto auto;
+}
+
+.wave-header {
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.center-stage h2,
+.export-box h2 {
+  font-size: 0.98rem;
+}
+
+.preview-actions {
+  gap: 6px;
+  min-width: 260px;
+}
+
+.segmented button {
+  min-height: 30px;
+  font-size: 0.76rem;
+}
+
+.waveform-wrap,
+#waveCanvas {
+  min-height: 142px;
+}
+
+.wave-legend {
+  gap: 14px;
+  padding: 6px 14px;
+  font-size: 0.76rem;
+}
+
+.transport {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+}
+
+.transport-button {
+  height: 38px;
+}
+
+.stat-grid {
+  gap: 8px;
+}
+
+.meter-block {
+  gap: 8px;
+}
+
+.export-box {
+  position: sticky;
+  bottom: 0;
+  margin: 0 -12px -12px;
+  padding: 12px;
+  border-radius: 8px 8px 0 0;
+}
+
+.download-stack {
+  gap: 7px;
+}
+
+.download-button {
+  min-height: 36px;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 1120px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .input-panel,
+  .meters-panel,
+  .center-stage {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell {
+    padding: 14px;
+  }
+
+  .topbar,
+  .wave-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .preview-actions {
+    min-width: 0;
+  }
+
+  .analysis-grid,
+  .preset-grid,
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .transport,
+  .time-readout {
+    grid-template-columns: 1fr;
+  }
+
+  .transport-button {
+    width: 100%;
+  }
+
+  .time-readout {
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,11 @@
+Thumbs.db
+.DS_Store
+.vscode/
+*.log
+*.tmp
+*.wav
+*.mp3
+*.aiff
+*.flac
+*.m4a
+*.ogg
