@@ -46,6 +46,10 @@ function trimLeadingSilence(buffer, threshold = 0.0008) {
   return trimmed;
 }
 
+function finiteOr(value, fallback) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
 export async function masterBuffer(inputBuffer, controls) {
   const sourceBuffer = controls.trimSilence ? trimLeadingSilence(inputBuffer) : inputBuffer;
   const sourceAnalysis = state.analysis ?? analyzeAudioBuffer(sourceBuffer);
@@ -66,19 +70,28 @@ export async function masterBuffer(inputBuffer, controls) {
 
   const lowShelf = offline.createBiquadFilter();
   lowShelf.type = "lowshelf";
-  lowShelf.frequency.value = 105;
+  lowShelf.frequency.value = dsp.lowShelfHz;
   lowShelf.gain.value = dsp.lowShelfDb;
 
   const lowMid = offline.createBiquadFilter();
   lowMid.type = "peaking";
-  lowMid.frequency.value = 285;
+  lowMid.frequency.value = dsp.mudCutHz;
   lowMid.Q.value = 0.82;
   lowMid.gain.value = dsp.mudCutDb;
 
   const highShelf = offline.createBiquadFilter();
   highShelf.type = "highshelf";
-  highShelf.frequency.value = 9000;
+  highShelf.frequency.value = dsp.highShelfHz;
   highShelf.gain.value = dsp.airDb;
+
+  const presenceTame = offline.createBiquadFilter();
+  presenceTame.type = "peaking";
+  presenceTame.frequency.value = dsp.presenceTameHz;
+  presenceTame.Q.value = 1.15;
+  presenceTame.gain.value = dsp.presenceTameDb;
+
+  const toneTrim = offline.createGain();
+  toneTrim.gain.value = dbToLinear(dsp.toneTrimDb);
 
   const preGain = offline.createGain();
   preGain.gain.value = dbToLinear(dsp.preGainDb);
@@ -111,14 +124,20 @@ export async function masterBuffer(inputBuffer, controls) {
   deHarsh.frequency.value = 19000;
   deHarsh.Q.value = 0.35;
 
-  // Parallel saturation: dry path keeps transients while the wet (waveshaped)
-  // path adds harmonics, both summing back into the compressor input.
+  // Conservative mastering chain: broad tone shaping first, tiny trim for EQ
+  // boosts, then split loudness gain so quiet mixes rise without overdriving
+  // already-loud sources into saturation or compression.
   source
     .connect(highPass)
     .connect(lowShelf)
     .connect(lowMid)
     .connect(highShelf)
+    .connect(presenceTame)
+    .connect(toneTrim)
     .connect(preGain);
+
+  // Parallel saturation keeps transients on the dry path and adds only a small
+  // harmonic layer on the wet path. It should feel like density, not distortion.
   preGain.connect(saturationDry).connect(compressor);
   preGain.connect(saturator).connect(saturationTrim).connect(saturationWet).connect(compressor);
   compressor.connect(makeupGain).connect(deHarsh).connect(offline.destination);
@@ -141,28 +160,65 @@ function buildMasteringSettings(analysis, controls) {
   const intensity = controls.intensity;
   const warmth = controls.warmth;
   const air = controls.air;
-  const lowCorrection = clamp((-12 - analysis.lowRatioDb) * 0.08, -0.7, 0.7);
-  const highCorrection = clamp((-20 - analysis.highRatioDb) * -0.07, -0.7, 0.8);
-  const loudnessGap = controls.targetLoudness - analysis.loudnessDb;
-  const enhancementOnly = isEnhancementOnlyMode(analysis.loudnessDb, controls.targetLoudness);
+  const lowRatioDb = finiteOr(analysis.lowRatioDb, -12);
+  const mudRatioDb = finiteOr(analysis.mudRatioDb, -8);
+  const presenceRatioDb = finiteOr(analysis.presenceRatioDb, -18);
+  const highRatioDb = finiteOr(analysis.highRatioDb, -20);
+  const sourceLoudnessDb = finiteOr(analysis.loudnessDb, controls.targetLoudness);
+  const rmsDb = finiteOr(analysis.rmsDb, sourceLoudnessDb - 6);
+  const crestDb = finiteOr(analysis.crestDb, 10);
+  const lowCorrection = clamp((-12 - lowRatioDb) * 0.07, -0.55, 0.55);
+  const highCorrection = clamp((-20 - highRatioDb) * -0.055, -0.5, 0.55);
+  const loudnessGap = controls.targetLoudness - sourceLoudnessDb;
+  const enhancementOnly = isEnhancementOnlyMode(sourceLoudnessDb, controls.targetLoudness);
   const mudIntensity = enhancementOnly ? intensity * 0.55 : intensity;
+  const lowShelfDb = clamp(
+    (warmth - 0.5) * 1.4 + lowCorrection + controls.bass * 2.4,
+    -1.2,
+    controls.bass > 0.25 ? 1.8 : 1.35,
+  );
+  const mudCutDb = -clamp(
+    0.1 + mudIntensity * 0.55 + Math.max(0, mudRatioDb + 7) * 0.08 + Math.max(0, controls.bass) * 0.65,
+    0.1,
+    enhancementOnly ? 0.75 : 1.25,
+  );
+  const airDb = clamp((air - 0.5) * 2 + highCorrection, -0.85, 1.05);
+  const presenceTameDb = -clamp(
+    Math.max(0, air - 0.55) * 1.15 +
+      Math.max(0, presenceRatioDb + 15) * 0.05 +
+      (highRatioDb > -16 ? 0.15 : 0),
+    0,
+    0.9,
+  );
+  const toneTrimDb = -clamp(
+    Math.max(0, lowShelfDb) * 0.18 + Math.max(0, airDb) * 0.12 + Math.max(0, controls.bass) * 0.25,
+    0,
+    0.55,
+  );
+  const makeupMaxDb = enhancementOnly ? 0.85 : 1.6;
 
   return {
     targetLoudness: controls.targetLoudness,
     ceilingDb: controls.ceilingDb,
-    highPassHz: analysis.lowRatioDb > -7 ? 32 : 25,
-    lowShelfDb: clamp((warmth - 0.5) * 2 + lowCorrection + controls.bass * 2.1, -1.5, 1.6),
-    mudCutDb: -clamp(0.12 + mudIntensity * 0.72 + Math.max(0, analysis.mudRatioDb + 7) * 0.06, 0.1, enhancementOnly ? 0.65 : 1.05),
-    airDb: clamp((air - 0.5) * 2.2 + highCorrection, -1, 1.25),
-    preGainDb: computePreGainDb(loudnessGap),
-    saturationDrive: 1 + intensity * 0.18,
-    saturationTrimDb: -0.05 - intensity * 0.12,
-    saturationWet: clamp(intensity * 0.08, 0, 0.08),
-    compressorThresholdDb: clamp(analysis.rmsDb + 7 - intensity * (enhancementOnly ? 2 : 3), -21, -12),
-    compressorRatio: enhancementOnly ? 1.28 + intensity * 0.5 : 1.28 + intensity * 0.6,
-    attackSeconds: 0.026,
-    releaseSeconds: 0.15 + clamp((analysis.crestDb - 11) * 0.006, -0.02, 0.05),
-    makeupGainDb: clamp(0.55 + intensity * 1.15 + Math.max(0, loudnessGap) * 0.08, 0.15, 2.6),
+    highPassHz: lowRatioDb > -7 ? 34 : 26,
+    lowShelfHz: 90,
+    lowShelfDb,
+    mudCutHz: controls.bass > 0.25 ? 245 : 285,
+    mudCutDb,
+    highShelfHz: 8800,
+    airDb,
+    presenceTameHz: 4500,
+    presenceTameDb,
+    toneTrimDb,
+    preGainDb: computePreGainDb(loudnessGap, enhancementOnly),
+    saturationDrive: 1 + intensity * 0.12,
+    saturationTrimDb: -0.04 - intensity * 0.08,
+    saturationWet: clamp(intensity * 0.06, 0, 0.055),
+    compressorThresholdDb: clamp(rmsDb + 8.5 - intensity * (enhancementOnly ? 1.4 : 2.1), -19, -10.5),
+    compressorRatio: enhancementOnly ? 1.18 + intensity * 0.38 : 1.2 + intensity * 0.5,
+    attackSeconds: 0.032,
+    releaseSeconds: 0.18 + clamp((crestDb - 11) * 0.007, -0.025, 0.06),
+    makeupGainDb: clamp(0.25 + intensity * 0.7 + Math.max(0, loudnessGap) * 0.035, 0.05, makeupMaxDb),
   };
 }
 
@@ -177,7 +233,7 @@ function finalizeMaster(buffer, targetLoudness, ceilingDb, sourceLoudnessDb) {
     sourceLoudnessDb,
   });
   const gained = applyGain(buffer, dbToLinear(desiredGainDb));
-  const limited = lookaheadLimit(gained, ceilingDb, 5, 110);
+  const limited = lookaheadLimit(gained, ceilingDb, 7, 140);
   const validated = normalizeToCeiling(limited, ceilingDb);
   const postTruePeakDb = estimateTruePeakDb(validated);
   if (postTruePeakDb > ceilingDb) {

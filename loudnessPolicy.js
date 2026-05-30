@@ -1,12 +1,15 @@
 import { clamp } from "./utils.js";
 
 export const PRESERVE_POLICY = "preserve";
+const HOT_SOURCE_LUFS = -10.5;
+const HOT_SOURCE_TRUE_PEAK_DB = -0.8;
+const HOT_SOURCE_CEILING_DB = -2;
 
 export function isHotSource(analysis) {
   if (!analysis) return false;
   return (
-    (Number.isFinite(analysis.loudnessDb) && analysis.loudnessDb > -10) ||
-    (Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb > -0.5)
+    (Number.isFinite(analysis.loudnessDb) && analysis.loudnessDb > HOT_SOURCE_LUFS) ||
+    (Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb > HOT_SOURCE_TRUE_PEAK_DB)
   );
 }
 
@@ -25,18 +28,19 @@ export function computeAdaptiveTarget(preset, analysis) {
 }
 
 export function computeAdaptiveCeiling(preset, analysis) {
-  if (isHotSource(analysis)) return -2;
+  if (isHotSource(analysis)) return HOT_SOURCE_CEILING_DB;
   return preset.ceilingDb;
 }
 
 /** Never attenuate for LUFS under preserve policy; only boost quiet sources toward target. */
 export function computePreserveGainDb(measuredLufs, effectiveTargetLufs) {
   if (!Number.isFinite(measuredLufs) || !Number.isFinite(effectiveTargetLufs)) return 0;
-  return clamp(Math.max(0, effectiveTargetLufs - measuredLufs), 0, 6);
+  return clamp(Math.max(0, effectiveTargetLufs - measuredLufs), 0, 4.5);
 }
 
-export function computePreGainDb(loudnessGap) {
-  return clamp(Math.max(0, loudnessGap * 0.3), 0, 3);
+export function computePreGainDb(loudnessGap, enhancementOnly = false) {
+  if (enhancementOnly) return 0;
+  return clamp(Math.max(0, loudnessGap * 0.22), 0, 2.2);
 }
 
 export function computeFinalizeGainDb({
@@ -47,15 +51,19 @@ export function computeFinalizeGainDb({
   sourceLoudnessDb,
 }) {
   const peakRoomDb = ceilingDb - truePeakDb;
-  const targetGap = targetLoudness - loudnessDb;
-  let desiredGainDb = Math.min(Math.max(0, targetGap), peakRoomDb);
+  const targetGap = Math.max(0, targetLoudness - loudnessDb);
+  let desiredGainDb = Math.min(targetGap, peakRoomDb);
 
   if (Number.isFinite(sourceLoudnessDb)) {
-    const maxBoostToMatchSource = sourceLoudnessDb - loudnessDb;
-    desiredGainDb = Math.max(desiredGainDb, Math.min(maxBoostToMatchSource, peakRoomDb, 2));
+    const matchSourceGainDb = Math.max(0, sourceLoudnessDb - loudnessDb);
+    const sourceAtOrAboveTarget = sourceLoudnessDb >= targetLoudness;
+    const sourceMatch = Math.min(matchSourceGainDb, peakRoomDb, 1.5);
+    desiredGainDb = sourceAtOrAboveTarget
+      ? sourceMatch
+      : Math.max(desiredGainDb, sourceMatch);
   }
 
-  const boostCap = loudnessDb < targetLoudness ? 6 : 2;
+  const boostCap = loudnessDb < targetLoudness ? 4.5 : 1.5;
   return clamp(desiredGainDb, 0, boostCap);
 }
 
