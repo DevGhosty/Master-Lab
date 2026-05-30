@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self'; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     />
     <title>Master Lab</title>
     <link rel="stylesheet" href="styles.css" />
@@ -62,27 +62,27 @@
               </div>
             </div>
             <div class="preset-grid" id="presetGrid" role="listbox" aria-label="Mastering presets">
-              <button class="preset-button" type="button" data-preset="balanced">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="balanced">
                 <strong>Balanced</strong>
                 <span>A clean, natural master with moderate loudness.</span>
               </button>
-              <button class="preset-button" type="button" data-preset="loud">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="loud">
                 <strong>Loud</strong>
                 <span>A louder master with more limiting.</span>
               </button>
-              <button class="preset-button" type="button" data-preset="warm">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="warm">
                 <strong>Warm</strong>
                 <span>A smoother sound with less harshness.</span>
               </button>
-              <button class="preset-button" type="button" data-preset="bright">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="bright">
                 <strong>Bright</strong>
                 <span>Adds clarity and presence.</span>
               </button>
-              <button class="preset-button" type="button" data-preset="bass">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="bass">
                 <strong>Bass Boost</strong>
                 <span>Adds more low-end weight.</span>
               </button>
-              <button class="preset-button active" type="button" data-preset="streaming">
+              <button class="preset-button active" type="button" role="option" aria-selected="true" data-preset="streaming">
                 <strong>Streaming Ready</strong>
                 <span>Targets a clean streaming-friendly loudness.</span>
               </button>
@@ -233,7 +233,7 @@
               <a class="download-button secondary disabled" id="wav16DownloadLink" aria-disabled="true">Download WAV 16-bit dithered</a>
               <a class="download-button secondary disabled" id="mp3DownloadLink" aria-disabled="true">Download MP3 320</a>
             </div>
-            <small id="encoderStatus">MP3 encoder will load when needed.</small>
+            <small id="encoderStatus">MP3 320 is encoded locally in your browser.</small>
           </section>
         </aside>
       </section>

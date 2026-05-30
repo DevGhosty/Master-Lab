@@ -23,7 +23,7 @@ https://github.com/DevGhosty/Master-Lab.git
 - Shows DC offset, stereo correlation, crest factor, silence, clipping, and broad tonal balance diagnostics.
 - Exports WAV 32-bit float locally.
 - Exports WAV 24-bit PCM and WAV 16-bit dithered locally.
-- Exports MP3 320 kbps when the browser MP3 encoder loads successfully.
+- Exports MP3 320 kbps locally using a bundled in-browser encoder.
 
 ## Privacy and limits
 
@@ -37,4 +37,4 @@ https://github.com/DevGhosty/Master-Lab.git
 
 The LUFS meter is a browser-side BS.1770-style implementation, not a certified broadcast meter. True peak is oversampled and safer than sample peak, but a dedicated mastering backend with FFmpeg/pyloudnorm would still be the next step for production-grade verification.
 
-MP3 export uses `vendor/lame.min.js` as the local entrypoint. In this workspace it is a small loader because the environment denied writing the full 156 KB encoder bundle into the OneDrive folder; replace it with the real lamejs 1.2.1 bundle for fully offline MP3 export. WAV exports remain fully local.
+All exports are fully local and offline. WAV (32-bit float, 24-bit PCM, 16-bit dithered) and MP3 320 are encoded entirely in the browser. MP3 uses the bundled `vendor/lame.min.js` (lamejs 1.2.1) encoder, so no network access or CDN is required and the Content-Security-Policy blocks all external connections.

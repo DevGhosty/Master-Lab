@@ -93,6 +93,8 @@ const state = {
   masteredAnalysis: null,
   limiterReductionDb: 0,
   progressStep: null,
+  mp3Worker: null,
+  mp3WorkerFailed: false,
 };
 
 const els = {
@@ -1211,49 +1213,100 @@ async function prepareDownloads(buffer) {
   enableDownload(els.wav16DownloadLink, state.wav16Url, wav16Name, "Download WAV 16-bit dithered");
 
   if (state.mp3Url) URL.revokeObjectURL(state.mp3Url);
-  if (window.lamejs?.Mp3Encoder) {
+  if (window.lamejs?.Mp3Encoder || isMp3WorkerAvailable()) {
     try {
-      const mp3 = encodeMp3(buffer, 320);
-      state.mp3Url = URL.createObjectURL(new Blob(mp3, { type: "audio/mpeg" }));
+      const mp3 = await encodeMp3Local(buffer, 320);
+      state.mp3Url = URL.createObjectURL(mp3.blob);
       enableDownload(els.mp3DownloadLink, state.mp3Url, mp3Name, "Download MP3 320");
-      els.encoderStatus.textContent = "MP3 320 encoded in this browser.";
+      els.encoderStatus.textContent = mp3.offMainThread
+        ? "MP3 320 encoded locally on a background thread."
+        : "MP3 320 encoded locally in your browser.";
     } catch (error) {
       console.error(error);
       disableDownload(els.mp3DownloadLink, "MP3 encode failed");
-      els.encoderStatus.textContent = "MP3 export failed, but the lossless WAV is ready.";
+      els.encoderStatus.textContent = "MP3 export failed, but the lossless WAV downloads are ready.";
     }
   } else {
-    const loaded = await loadMp3EncoderFallback();
-    if (loaded && window.lamejs?.Mp3Encoder) {
-      try {
-        const mp3 = encodeMp3(buffer, 320);
-        state.mp3Url = URL.createObjectURL(new Blob(mp3, { type: "audio/mpeg" }));
-        enableDownload(els.mp3DownloadLink, state.mp3Url, mp3Name, "Download MP3 320");
-        els.encoderStatus.textContent = "MP3 320 encoded in this browser.";
-      } catch (error) {
-        console.error(error);
-        disableDownload(els.mp3DownloadLink, "MP3 encode failed");
-        els.encoderStatus.textContent = "MP3 export failed, but the WAV downloads are ready.";
-      }
-    } else {
-      disableDownload(els.mp3DownloadLink, "MP3 encoder unavailable");
-      els.encoderStatus.textContent = "MP3 encoder did not load. WAV downloads are still ready.";
-    }
+    disableDownload(els.mp3DownloadLink, "MP3 encoder unavailable");
+    els.encoderStatus.textContent = "Local MP3 encoder did not load. WAV downloads are still ready.";
   }
 
   els.exportText.textContent = "Your master is ready. Download it for free.";
 }
 
-function loadMp3EncoderFallback() {
-  if (window.lamejs?.Mp3Encoder) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js";
-    script.crossOrigin = "anonymous";
-    script.onload = () => resolve(Boolean(window.lamejs?.Mp3Encoder));
-    script.onerror = () => resolve(false);
-    document.head.appendChild(script);
+function isMp3WorkerAvailable() {
+  return !state.mp3WorkerFailed && typeof Worker !== "undefined";
+}
+
+function getMp3Worker() {
+  if (state.mp3WorkerFailed) return null;
+  if (!state.mp3Worker) {
+    try {
+      state.mp3Worker = new Worker("mp3-worker.js");
+    } catch (error) {
+      console.warn("MP3 worker could not be created; will encode on the main thread.", error);
+      state.mp3WorkerFailed = true;
+      state.mp3Worker = null;
+    }
+  }
+  return state.mp3Worker;
+}
+
+function disposeMp3Worker(markFailed = false) {
+  if (state.mp3Worker) state.mp3Worker.terminate();
+  state.mp3Worker = null;
+  if (markFailed) state.mp3WorkerFailed = true;
+}
+
+function encodeMp3WithWorker(buffer, kbps) {
+  return new Promise((resolve, reject) => {
+    const worker = getMp3Worker();
+    if (!worker) {
+      reject(new Error("MP3 worker unavailable"));
+      return;
+    }
+
+    const channels = Math.min(buffer.numberOfChannels, 2);
+    const left = buffer.getChannelData(0).slice();
+    const right = channels > 1 ? buffer.getChannelData(1).slice() : null;
+    const transfer = [left.buffer];
+    if (right) transfer.push(right.buffer);
+
+    const cleanup = () => {
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+    };
+    const onMessage = (event) => {
+      cleanup();
+      if (event.data && event.data.ok) {
+        resolve(event.data.data);
+      } else {
+        reject(new Error(event.data?.error || "MP3 worker failed"));
+      }
+    };
+    const onError = (event) => {
+      cleanup();
+      disposeMp3Worker(true);
+      reject(new Error(event.message || "MP3 worker error"));
+    };
+
+    worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
+    worker.postMessage({ channels, sampleRate: buffer.sampleRate, kbps, left, right }, transfer);
   });
+}
+
+async function encodeMp3Local(buffer, kbps) {
+  if (isMp3WorkerAvailable()) {
+    try {
+      const data = await encodeMp3WithWorker(buffer, kbps);
+      return { blob: new Blob([data], { type: "audio/mpeg" }), offMainThread: true };
+    } catch (error) {
+      console.warn("Falling back to main-thread MP3 encoding.", error);
+    }
+  }
+  const chunks = encodeMp3(buffer, kbps);
+  return { blob: new Blob(chunks, { type: "audio/mpeg" }), offMainThread: false };
 }
 
 function enableDownload(link, href, download, text) {
@@ -1652,7 +1705,7 @@ function resetMasterOnly() {
   disableDownload(els.wav16DownloadLink, "Download WAV 16-bit dithered");
   disableDownload(els.mp3DownloadLink, "Download MP3 320");
   els.exportText.textContent = "Run a master to prepare free downloads.";
-  els.encoderStatus.textContent = "MP3 encoder is loaded locally when available.";
+  els.encoderStatus.textContent = "MP3 320 is encoded locally in your browser.";
 }
 
 function cleanupUrls() {
@@ -1776,7 +1829,10 @@ window.addEventListener("resize", () => {
   if (state.originalBuffer) drawWaveform();
 });
 
-window.addEventListener("pagehide", cleanupUrls);
+window.addEventListener("pagehide", () => {
+  cleanupUrls();
+  disposeMp3Worker();
+});
 
 selectPreset("streaming", true);
 setProgress("analyze", 0, "Ready");
