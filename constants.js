@@ -43,6 +43,7 @@ export const COPY = {
     readyToMaster: "Ready to master",
     masterReady: "Your master is ready. Download it for free.",
     masterReadyServer: "Your master is ready. Processed on server and deleted after download.",
+    masteringInProgress: "Mastering on server—this can take 3–8 minutes for long tracks. Keep this tab open.",
   },
   errors: {
     serverUnreachable: "Could not reach the mastering server. Try again in a moment.",

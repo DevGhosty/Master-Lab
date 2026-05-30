@@ -160,59 +160,74 @@ async function ensurePcmAnalyzePath(inputPath) {
   };
 }
 
-export async function analyzeAudioFile(inputPath) {
-  const probe = await ffprobeJson(inputPath);
+function probeFromFfprobe(probe) {
   const audioStream = probe.streams?.find((s) => s.codec_type === "audio");
   if (!audioStream) throw new Error("No audio stream found");
+  return {
+    duration: Number(probe.format?.duration || audioStream.duration || 0),
+    channels: Number(audioStream.channels || 1),
+    sampleRate: Number(audioStream.sample_rate || 44100),
+    bitDepth: audioStream.bits_per_raw_sample
+      ? Number(audioStream.bits_per_raw_sample)
+      : audioStream.bits_per_sample
+        ? Number(audioStream.bits_per_sample)
+        : null,
+  };
+}
 
-  const duration = Number(probe.format?.duration || audioStream.duration || 0);
-  const channels = Number(audioStream.channels || 1);
-  const sampleRate = Number(audioStream.sample_rate || 44100);
-  const bitDepth = audioStream.bits_per_raw_sample
-    ? Number(audioStream.bits_per_raw_sample)
-    : audioStream.bits_per_sample
-      ? Number(audioStream.bits_per_sample)
-      : null;
+function buildAnalysisFromMetrics(metrics, clip, silence, channels) {
+  const { peakDb, rmsDb, peak, rms, loudnessDb, truePeakDb } = metrics;
+  return {
+    rms,
+    peak,
+    rmsDb,
+    peakDb,
+    truePeakDb,
+    loudnessDb,
+    crestDb: peakDb - rmsDb,
+    lowRatioDb: -12,
+    mudRatioDb: -8,
+    midRatioDb: -10,
+    presenceRatioDb: -14,
+    highRatioDb: -18,
+    dcOffset: 0,
+    dcOffsetDb: -80,
+    stereoCorrelation: channels >= 2 ? 0.85 : null,
+    leadingSilenceSeconds: silence.leading,
+    trailingSilenceSeconds: silence.trailing,
+    clippingSamples: clip.clippingSamples,
+    clippingRatio: clip.clippingRatio,
+  };
+}
 
+export async function probeAudioFile(inputPath) {
+  return probeFromFfprobe(await ffprobeJson(inputPath));
+}
+
+export async function analyzeMetricsOnly(inputPath) {
+  const probe = await probeAudioFile(inputPath);
+  const { analyzePath, cleanup } = await ensurePcmAnalyzePath(inputPath);
+  try {
+    const { loudnorm, stats, clip, silence } = await runCombinedMetricsPass(analyzePath);
+    const metrics = reconcilePeakMetrics(stats, loudnorm);
+    return buildAnalysisFromMetrics(metrics, clip, silence, probe.channels);
+  } finally {
+    if (cleanup) await cleanup();
+  }
+}
+
+export async function analyzeAudioFile(inputPath) {
+  const probe = await probeAudioFile(inputPath);
   const { analyzePath, cleanup } = await ensurePcmAnalyzePath(inputPath);
   try {
     const [{ loudnorm, stats, clip, silence }, waveformPeaks] = await Promise.all([
       runCombinedMetricsPass(analyzePath),
       extractWaveformPeaks(analyzePath, 800),
     ]);
-
     const metrics = reconcilePeakMetrics(stats, loudnorm);
-    const loudnessDb = metrics.loudnessDb;
-    const truePeakDb = metrics.truePeakDb;
-    const peakDb = metrics.peakDb;
-    const rmsDb = metrics.rmsDb;
-    const crestDb = peakDb - rmsDb;
-
-    const analysis = {
-      rms: metrics.rms,
-      peak: metrics.peak,
-      rmsDb,
-      peakDb,
-      truePeakDb,
-      loudnessDb,
-      crestDb,
-      lowRatioDb: -12,
-      mudRatioDb: -8,
-      midRatioDb: -10,
-      presenceRatioDb: -14,
-      highRatioDb: -18,
-      dcOffset: 0,
-      dcOffsetDb: -80,
-      stereoCorrelation: channels >= 2 ? 0.85 : null,
-      leadingSilenceSeconds: silence.leading,
-      trailingSilenceSeconds: silence.trailing,
-      clippingSamples: clip.clippingSamples,
-      clippingRatio: clip.clippingRatio,
-    };
-
     return {
-      probe: { duration, channels, sampleRate, bitDepth },
-      analysis,
+      probe,
+      analysis: buildAnalysisFromMetrics(metrics, clip, silence, probe.channels),
       waveformPeaks,
     };
   } finally {
@@ -327,7 +342,7 @@ export async function masterToFiles(inputPath, workDir, filterChain) {
     mp3Path,
   ]);
 
-  const postAnalysis = await analyzeAudioFile(masteredPath);
+  const masteredAnalysis = await analyzeMetricsOnly(masteredPath);
 
   return {
     files: {
@@ -337,7 +352,7 @@ export async function masterToFiles(inputPath, workDir, filterChain) {
       wav16: wav16Path,
       mp3: mp3Path,
     },
-    masteredAnalysis: postAnalysis.analysis,
+    masteredAnalysis,
   };
 }
 

@@ -200,12 +200,14 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
     intensity: Number(req.body?.intensity),
     warmth: Number(req.body?.warmth),
     air: Number(req.body?.air),
+    trimSilence: req.body?.trimSilence === "true" || req.body?.trimSilence === true,
   };
   try {
     if (!uploadPath) {
       res.status(400).json({ error: "Missing audio file" });
       return;
     }
+    console.info(`[master] start preset=${preset} file=${req.file.originalname} size=${req.file.size}`);
     const job = createJob();
     const inputCopy = path.join(job.dir, `input${path.extname(req.file.originalname) || ".wav"}`);
     await fs.mkdir(job.dir, { recursive: true });

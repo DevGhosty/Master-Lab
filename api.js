@@ -394,8 +394,8 @@ export async function runMasteringViaApi() {
   // #endregion
 
   try {
-    setStatus("Uploading to server for mastering...");
-    setProgress("prepare", 55, "Uploading to server");
+    setStatus(COPY.status.masteringInProgress);
+    setProgress("prepare", 52, "Starting master job");
     await nextFrame();
 
     const controls = readControls();
@@ -437,13 +437,15 @@ export async function runMasteringViaApi() {
     }
 
     state.masterJobId = startPayload.jobId;
-    setStatus(`Applying ${PRESETS[state.selectedPreset].label} preset on server...`);
-    setProgress("apply", 70, "Applying mastering preset");
+    setStatus(COPY.status.masteringInProgress);
+    setProgress("apply", Math.max(56, Math.min(90, 55 + Math.round((startPayload.progress || 0) * 0.35))), startPayload.message || "Processing on server");
 
     let job = startPayload;
     let pollCount = 0;
     while (job.status === "queued" || job.status === "processing") {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (pollCount > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
       pollCount += 1;
       const pollStartedAt = Date.now();
       const statusResponse = await fetchWithTimeout(`${getApiBase()}/api/jobs/${state.masterJobId}`);
@@ -464,8 +466,9 @@ export async function runMasteringViaApi() {
         throw new Error(job.error || "Job status failed");
       }
       const stepPercent = Math.min(90, 55 + Math.round((job.progress || 0) * 0.35));
-      setProgress(job.progress >= 84 ? "preview" : "apply", stepPercent, job.message || "Processing on server");
-      setStatus(job.message || "Mastering on server...");
+      const progressStep = job.progress >= 84 ? "preview" : job.progress >= 25 ? "apply" : "prepare";
+      setProgress(progressStep, stepPercent, job.message || "Processing on server");
+      setStatus(`${job.message || "Mastering on server…"} (${job.progress || 0}%)`);
     }
 
     if (job.status !== "done") {

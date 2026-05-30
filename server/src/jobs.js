@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { JOB_TTL_MS, MAX_CHANNELS, MAX_DURATION_SECONDS } from "./constants.js";
 import { buildMasterFilter } from "./presets.js";
-import { analyzeAudioFile, extractWaveformPeaks, masterToFiles, removeDir } from "./ffmpeg.js";
+import { extractWaveformPeaks, masterToFiles, probeAudioFile, removeDir } from "./ffmpeg.js";
 
 function validateProbe(probe) {
   if (probe.duration > MAX_DURATION_SECONDS) {
@@ -41,21 +41,22 @@ export function getJob(id) {
 }
 
 export async function runMasterJob(job, inputPath, preset, controls) {
+  const startedAt = Date.now();
   job.status = "processing";
-  job.progress = 5;
-  job.message = "Analyzing original file";
+  job.progress = 8;
+  job.message = "Validating audio";
   await fs.mkdir(job.dir, { recursive: true });
 
   try {
-    const analyzed = await analyzeAudioFile(inputPath);
-    validateProbe(analyzed.probe);
-    job.progress = 10;
+    const probe = await probeAudioFile(inputPath);
+    validateProbe(probe);
+    job.progress = 15;
     job.message = "Applying mastering preset";
     const filter = buildMasterFilter(preset, controls);
-    job.progress = 40;
-    job.message = "Rendering master";
+    job.progress = 25;
+    job.message = "Rendering master (this can take several minutes)";
     const result = await masterToFiles(inputPath, job.dir, filter);
-    job.progress = 90;
+    job.progress = 88;
     job.message = "Preparing downloads";
     job.files = result.files;
     job.meta = {
@@ -68,10 +69,14 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     job.status = "done";
     job.progress = 100;
     job.message = "Master ready";
+    console.info(
+      `[master] ok job=${job.id} duration=${probe.duration}s elapsed=${Date.now() - startedAt}ms`,
+    );
   } catch (error) {
     job.status = "failed";
     job.error = error.message || String(error);
     job.message = "Mastering failed";
+    console.error(`[master] fail job=${job.id} elapsed=${Date.now() - startedAt}ms`, error);
     await removeDir(job.dir).catch(() => {});
   }
 }
