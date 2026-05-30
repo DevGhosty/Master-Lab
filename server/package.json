@@ -1,6 +1,7 @@
 {
   "name": "master-lab-api",
   "version": "1.0.0",
+  "type": "module",
   "private": true,
   "description": "Ephemeral FFmpeg mastering API for Master Lab",
   "main": "src/index.js",

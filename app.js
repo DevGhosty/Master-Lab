@@ -210,6 +210,7 @@ function resetMasterOnly() {
   state.masteredBuffer = null;
   state.masteredAnalysis = null;
   state.apiProbe = null;
+  state.apiSessionId = null;
   state.originalWaveformPeaks = null;
   state.masteredWaveformPeaks = null;
   state.masterJobId = null;

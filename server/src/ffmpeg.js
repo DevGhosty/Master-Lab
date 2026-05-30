@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+const FFMPEG_GLOBAL = ["-hide_banner", "-threads", "0"];
+
 export function runCommand(cmd, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { ...options, windowsHide: true });
@@ -34,19 +36,18 @@ export async function ffprobeJson(inputPath) {
   return JSON.parse(stdout);
 }
 
-function parseLoudnormJson(stderr) {
-  const match = stderr.match(/\{[\s\S]*"input_i"[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return null;
-  }
-}
-
-function linearToDb(value) {
-  if (value <= 0 || !Number.isFinite(value)) return -Infinity;
-  return 20 * Math.log10(value);
+function parseEbur128Summary(stderr) {
+  const summary = stderr.match(/Summary:[\s\S]*?(?=\n\[|\n*$)/i)?.[0] || stderr;
+  const integratedMatch =
+    summary.match(/Integrated loudness\s*\(I\):\s*([-\d.]+)\s*LUFS/i) ||
+    stderr.match(/\bI:\s*([-\d.]+)\s*LUFS/i);
+  const truePeakMatch =
+    summary.match(/True peak:\s*([-\d.]+)\s*dBTP/i) ||
+    stderr.match(/\bPeak:\s*([-\d.]+)\s*dBTP/i);
+  return {
+    input_i: integratedMatch ? Number(integratedMatch[1]) : null,
+    input_tp: truePeakMatch ? Number(truePeakMatch[1]) : null,
+  };
 }
 
 function parseSilence(stderr) {
@@ -81,9 +82,9 @@ function parsePeakStats(stderr) {
   return { peakDb, rmsDb, peak: peakLinear, rms: rmsLinear };
 }
 
-function reconcilePeakMetrics(stats, loudnorm) {
-  const loudnessDb = loudnorm.input_i != null ? Number(loudnorm.input_i) : stats.rmsDb;
-  const truePeakDb = loudnorm.input_tp != null ? Number(loudnorm.input_tp) : stats.peakDb;
+function reconcilePeakMetrics(stats, loudness) {
+  const loudnessDb = loudness.input_i != null ? Number(loudness.input_i) : stats.rmsDb;
+  const truePeakDb = loudness.input_tp != null ? Number(loudness.input_tp) : stats.peakDb;
   let peakDb = stats.peakDb;
   let rmsDb = stats.rmsDb;
   let peak = stats.peak;
@@ -112,52 +113,6 @@ function parseClipping(stderr) {
   const clippingSamples = clipMatch ? Number(clipMatch[1]) : 0;
   const total = totalMatch ? Number(totalMatch[1]) : 1;
   return { clippingSamples, clippingRatio: clippingSamples / Math.max(1, total) };
-}
-
-const LOSSY_EXTENSIONS = new Set([".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wma"]);
-
-async function runCombinedMetricsPass(inputPath) {
-  const { code, stderr } = await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-i",
-    inputPath,
-    "-af",
-    "loudnorm=print_format=json,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3",
-    "-f",
-    "null",
-    "-",
-  ]);
-  if (code !== 0) throw new Error(stderr || "Audio analysis failed");
-  return {
-    loudnorm: parseLoudnormJson(stderr) || {},
-    stats: parsePeakStats(stderr),
-    clip: parseClipping(stderr),
-    silence: parseSilence(stderr),
-  };
-}
-
-async function ensurePcmAnalyzePath(inputPath) {
-  const ext = path.extname(inputPath).toLowerCase();
-  if (!LOSSY_EXTENSIONS.has(ext)) return { analyzePath: inputPath, cleanup: null };
-  const tempWav = `${inputPath}.analyze.wav`;
-  const { code, stderr } = await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-y",
-    "-i",
-    inputPath,
-    "-ac",
-    "2",
-    "-c:a",
-    "pcm_s16le",
-    tempWav,
-  ]);
-  if (code !== 0) throw new Error(stderr || "Audio decode failed");
-  return {
-    analyzePath: tempWav,
-    cleanup: async () => {
-      await fs.unlink(tempWav).catch(() => {});
-    },
-  };
 }
 
 function probeFromFfprobe(probe) {
@@ -200,65 +155,7 @@ function buildAnalysisFromMetrics(metrics, clip, silence, channels) {
   };
 }
 
-export async function probeAudioFile(inputPath) {
-  return probeFromFfprobe(await ffprobeJson(inputPath));
-}
-
-export async function analyzeMetricsOnly(inputPath) {
-  const probe = await probeAudioFile(inputPath);
-  const { analyzePath, cleanup } = await ensurePcmAnalyzePath(inputPath);
-  try {
-    const { loudnorm, stats, clip, silence } = await runCombinedMetricsPass(analyzePath);
-    const metrics = reconcilePeakMetrics(stats, loudnorm);
-    return buildAnalysisFromMetrics(metrics, clip, silence, probe.channels);
-  } finally {
-    if (cleanup) await cleanup();
-  }
-}
-
-export async function analyzeAudioFile(inputPath) {
-  const probe = await probeAudioFile(inputPath);
-  const { analyzePath, cleanup } = await ensurePcmAnalyzePath(inputPath);
-  try {
-    const [{ loudnorm, stats, clip, silence }, waveformPeaks] = await Promise.all([
-      runCombinedMetricsPass(analyzePath),
-      extractWaveformPeaks(analyzePath, 800),
-    ]);
-    const metrics = reconcilePeakMetrics(stats, loudnorm);
-    return {
-      probe,
-      analysis: buildAnalysisFromMetrics(metrics, clip, silence, probe.channels),
-      waveformPeaks,
-    };
-  } finally {
-    if (cleanup) await cleanup();
-  }
-}
-
-export async function extractWaveformPeaks(inputPath, width = 800) {
-  const peaksRaw = `${inputPath}.peaks.f32le`;
-  const { code } = await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-y",
-    "-i",
-    inputPath,
-    "-ac",
-    "1",
-    "-ar",
-    "8000",
-    "-f",
-    "f32le",
-    peaksRaw,
-  ]);
-  if (code !== 0) return [];
-  let buffer;
-  try {
-    buffer = await fs.readFile(peaksRaw);
-  } catch {
-    return [];
-  } finally {
-    await fs.unlink(peaksRaw).catch(() => {});
-  }
+function peaksFromFloat32File(buffer, width = 800) {
   const samples = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
   const block = Math.max(1, Math.floor(samples.length / width));
   const peaks = [];
@@ -276,84 +173,199 @@ export async function extractWaveformPeaks(inputPath, width = 800) {
   return peaks;
 }
 
+async function readPeaksFile(peaksRaw, width = 800) {
+  let buffer;
+  try {
+    buffer = await fs.readFile(peaksRaw);
+  } catch {
+    return [];
+  } finally {
+    await fs.unlink(peaksRaw).catch(() => {});
+  }
+  return peaksFromFloat32File(buffer, width);
+}
+
+/** Fast EBU R128 measurement pass (much faster than loudnorm for analysis). */
+async function runMetricsPass(inputPath) {
+  const { code, stderr } = await runCommand("ffmpeg", [
+    ...FFMPEG_GLOBAL,
+    "-i",
+    inputPath,
+    "-af",
+    "ebur128=peak=true,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3",
+    "-f",
+    "null",
+    "-",
+  ]);
+  if (code !== 0) throw new Error(stderr || "Audio analysis failed");
+  return {
+    loudness: parseEbur128Summary(stderr),
+    stats: parsePeakStats(stderr),
+    clip: parseClipping(stderr),
+    silence: parseSilence(stderr),
+  };
+}
+
+/** One decode: metrics branch + waveform branch in parallel inside FFmpeg. */
+async function runCombinedAnalyzePass(inputPath, peaksRaw) {
+  const filterComplex = [
+    "[0:a]asplit=2[meta][wave]",
+    "[meta]aformat=sample_rates=48000:channel_layouts=stereo,ebur128=peak=true,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3[aout]",
+    "[wave]aresample=8000,aformat=channel_layouts=mono:sample_fmts=flt[wout]",
+  ].join(";");
+
+  const { code, stderr } = await runCommand("ffmpeg", [
+    ...FFMPEG_GLOBAL,
+    "-y",
+    "-i",
+    inputPath,
+    "-filter_complex",
+    filterComplex,
+    "-map",
+    "[aout]",
+    "-f",
+    "null",
+    "-",
+    "-map",
+    "[wout]",
+    "-f",
+    "f32le",
+    peaksRaw,
+  ]);
+  if (code !== 0) throw new Error(stderr || "Audio analysis failed");
+  return {
+    loudness: parseEbur128Summary(stderr),
+    stats: parsePeakStats(stderr),
+    clip: parseClipping(stderr),
+    silence: parseSilence(stderr),
+  };
+}
+
+export async function probeAudioFile(inputPath) {
+  return probeFromFfprobe(await ffprobeJson(inputPath));
+}
+
+export async function measureIntegratedLoudness(inputPath) {
+  const { code, stderr } = await runCommand("ffmpeg", [
+    ...FFMPEG_GLOBAL,
+    "-i",
+    inputPath,
+    "-af",
+    "ebur128=peak=true",
+    "-f",
+    "null",
+    "-",
+  ]);
+  if (code !== 0) throw new Error(stderr || "Loudness measurement failed");
+  return parseEbur128Summary(stderr);
+}
+
+export async function analyzeMetricsOnly(inputPath) {
+  const probe = await probeAudioFile(inputPath);
+  const { loudness, stats, clip, silence } = await runMetricsPass(inputPath);
+  const metrics = reconcilePeakMetrics(stats, loudness);
+  return buildAnalysisFromMetrics(metrics, clip, silence, probe.channels);
+}
+
+export async function analyzeAudioFile(inputPath) {
+  const probe = await probeAudioFile(inputPath);
+  const peaksRaw = `${inputPath}.peaks.f32le`;
+  const { loudness, stats, clip, silence } = await runCombinedAnalyzePass(inputPath, peaksRaw);
+  const metrics = reconcilePeakMetrics(stats, loudness);
+  const waveformPeaks = await readPeaksFile(peaksRaw);
+  return {
+    probe,
+    analysis: buildAnalysisFromMetrics(metrics, clip, silence, probe.channels),
+    waveformPeaks,
+  };
+}
+
+export async function extractWaveformPeaks(inputPath, width = 800) {
+  const peaksRaw = `${inputPath}.peaks.f32le`;
+  const { code } = await runCommand("ffmpeg", [
+    ...FFMPEG_GLOBAL,
+    "-y",
+    "-i",
+    inputPath,
+    "-ac",
+    "1",
+    "-ar",
+    "8000",
+    "-f",
+    "f32le",
+    peaksRaw,
+  ]);
+  if (code !== 0) return [];
+  return readPeaksFile(peaksRaw, width);
+}
+
 export async function masterToFiles(inputPath, workDir, filterChain, onProgress) {
   const report = (progress, message) => {
     if (typeof onProgress === "function") onProgress({ progress, message });
   };
 
-  const masteredPath = path.join(workDir, "mastered.wav");
-  report(30, "Applying mastering filter");
+  const previewPath = path.join(workDir, "preview.wav");
+  const wav32Path = path.join(workDir, "master-32float.wav");
+  const wav24Path = path.join(workDir, "master-24bit.wav");
+  const wav16Path = path.join(workDir, "master-16bit.wav");
+  const mp3Path = path.join(workDir, "master-320.mp3");
+  const peaksRaw = path.join(workDir, "waveform.peaks.f32le");
+
+  const filterComplex = [
+    `[0:a]${filterChain}[master]`,
+    "[master]asplit=6[pv][w32][w24][w16][mp3s][wf]",
+    "[pv]atrim=end=30,asetpts=PTS-STARTPTS[pout]",
+    "[wf]aresample=8000,aformat=channel_layouts=mono:sample_fmts=flt[wout]",
+  ].join(";");
+
+  report(30, "Rendering master and exports");
   const { code, stderr } = await runCommand("ffmpeg", [
-    "-hide_banner",
+    ...FFMPEG_GLOBAL,
     "-y",
     "-i",
     inputPath,
-    "-af",
-    filterChain,
-    "-c:a",
-    "pcm_f32le",
-    masteredPath,
-  ]);
-  if (code !== 0) throw new Error(stderr || "Mastering failed");
-
-  const previewPath = path.join(workDir, "preview.wav");
-  report(48, "Creating preview");
-  await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-y",
-    "-i",
-    masteredPath,
-    "-t",
-    "30",
+    "-filter_complex",
+    filterComplex,
+    "-map",
+    "[pout]",
     "-c:a",
     "pcm_s16le",
     previewPath,
-  ]);
-
-  const wav32Path = path.join(workDir, "master-32float.wav");
-  report(58, "Exporting 32-bit WAV");
-  await fs.copyFile(masteredPath, wav32Path);
-
-  const wav24Path = path.join(workDir, "master-24bit.wav");
-  report(66, "Exporting 24-bit WAV");
-  await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-y",
-    "-i",
-    masteredPath,
+    "-map",
+    "[w32]",
+    "-c:a",
+    "pcm_f32le",
+    wav32Path,
+    "-map",
+    "[w24]",
     "-c:a",
     "pcm_s24le",
     wav24Path,
-  ]);
-
-  const wav16Path = path.join(workDir, "master-16bit.wav");
-  report(74, "Exporting 16-bit WAV");
-  await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-y",
-    "-i",
-    masteredPath,
+    "-map",
+    "[w16]",
     "-c:a",
     "pcm_s16le",
     wav16Path,
-  ]);
-
-  const mp3Path = path.join(workDir, "master-320.mp3");
-  report(82, "Encoding MP3");
-  await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-y",
-    "-i",
-    masteredPath,
+    "-map",
+    "[mp3s]",
     "-c:a",
     "libmp3lame",
     "-b:a",
     "320k",
     mp3Path,
+    "-map",
+    "[wout]",
+    "-f",
+    "f32le",
+    peaksRaw,
   ]);
+  if (code !== 0) throw new Error(stderr || "Mastering failed");
 
-  report(86, "Analyzing master");
-  const masteredAnalysis = await analyzeMetricsOnly(masteredPath);
+  report(86, "Analyzing master preview");
+  const [masteredAnalysis, waveformPeaks] = await Promise.all([
+    analyzeMetricsOnly(previewPath),
+    readPeaksFile(peaksRaw),
+  ]);
 
   return {
     files: {
@@ -364,6 +376,7 @@ export async function masterToFiles(inputPath, workDir, filterChain, onProgress)
       mp3: mp3Path,
     },
     masteredAnalysis,
+    waveformPeaks,
   };
 }
 

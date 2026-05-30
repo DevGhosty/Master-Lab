@@ -13,9 +13,15 @@ import {
   SYNC_MASTER_MAX_SECONDS,
   VALID_PRESETS,
 } from "./constants.js";
-import { analyzeAudioFile, extractWaveformPeaks, masterToFiles, removeDir } from "./ffmpeg.js";
+import { analyzeAudioFile, masterToFiles, measureIntegratedLoudness, removeDir } from "./ffmpeg.js";
 import { buildMasterFilter } from "./presets.js";
 import { createJob, getJob, runMasterJob, scheduleJobCleanup } from "./jobs.js";
+import {
+  createUploadSession,
+  getUploadSession,
+  releaseUploadSession,
+  scheduleSessionCleanup,
+} from "./sessions.js";
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -85,7 +91,7 @@ function validateProbe(probe) {
 }
 
 app.post("/api/analyze", upload.single("file"), async (req, res) => {
-  const uploadPath = req.file?.path;
+  let uploadPath = req.file?.path;
   const startedAt = Date.now();
   try {
     if (!uploadPath) {
@@ -94,13 +100,16 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
     }
     const result = await analyzeAudioFile(uploadPath);
     validateProbe(result.probe);
+    const sessionId = createUploadSession(uploadPath, req.file.originalname);
+    uploadPath = null;
     console.log(
-      `[analyze] ok ${req.file.originalname} size=${req.file.size} duration=${result.probe.duration}s elapsed=${Date.now() - startedAt}ms`,
+      `[analyze] ok ${req.file.originalname} size=${req.file.size} duration=${result.probe.duration}s elapsed=${Date.now() - startedAt}ms session=${sessionId}`,
     );
     res.json({
       probe: result.probe,
       analysis: result.analysis,
       waveformPeaks: result.waveformPeaks,
+      sessionId,
     });
   } catch (error) {
     console.error(
@@ -109,7 +118,7 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
     );
     res.status(400).json({ error: error.message || "Analysis failed" });
   } finally {
-    await cleanupUpload(uploadPath);
+    if (uploadPath) await cleanupUpload(uploadPath);
   }
 });
 
@@ -166,7 +175,8 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
       return;
     }
     await fs.mkdir(workDir, { recursive: true });
-    const filter = buildMasterFilter(preset, controls);
+    const loudness = await measureIntegratedLoudness(uploadPath);
+    const filter = buildMasterFilter(preset, controls, { measuredLufs: loudness.input_i });
     const result = await masterToFiles(uploadPath, workDir, filter);
     const meta = {
       masteredAnalysis: result.masteredAnalysis,
@@ -174,7 +184,7 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
       limiterReductionDb: 0,
       preset,
       serverMaster: true,
-      waveformPeaks: await extractWaveformPeaks(result.files.wav32, 800),
+      waveformPeaks: result.waveformPeaks || null,
     };
     await streamZip(result.files, meta, res);
   } catch (error) {
@@ -189,10 +199,14 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
 });
 
 app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
-  const uploadPath = req.file?.path;
+  const sessionId = req.body?.sessionId;
+  let uploadPath = req.file?.path;
+  let ownsUpload = Boolean(uploadPath);
+  let consumedSessionId = null;
+  let cachedSession = null;
   const preset = req.body?.preset || "streaming";
   if (!VALID_PRESETS.has(preset)) {
-    await cleanupUpload(uploadPath);
+    if (ownsUpload) await cleanupUpload(uploadPath);
     res.status(400).json({ error: "Invalid preset" });
     return;
   }
@@ -203,15 +217,31 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
     trimSilence: req.body?.trimSilence === "true" || req.body?.trimSilence === true,
   };
   try {
+    if (!uploadPath && sessionId) {
+      cachedSession = getUploadSession(sessionId);
+      if (!cachedSession) {
+        res.status(404).json({ error: "Session expired; re-upload and analyze again." });
+        return;
+      }
+      uploadPath = cachedSession.path;
+      consumedSessionId = sessionId;
+    }
     if (!uploadPath) {
-      res.status(400).json({ error: "Missing audio file" });
+      res.status(400).json({ error: "Missing audio file or sessionId" });
       return;
     }
-    console.info(`[master] start preset=${preset} file=${req.file.originalname} size=${req.file.size}`);
+    const sourceName = req.file?.originalname || cachedSession?.originalName || "upload";
+    const sourceSize = req.file?.size || 0;
+    console.info(`[master] start preset=${preset} file=${sourceName} size=${sourceSize || "session"} session=${consumedSessionId || "none"}`);
     const job = createJob();
-    const inputCopy = path.join(job.dir, `input${path.extname(req.file.originalname) || ".wav"}`);
+    const ext = path.extname(sourceName) || path.extname(uploadPath) || ".wav";
+    const inputCopy = path.join(job.dir, `input${ext}`);
     await fs.mkdir(job.dir, { recursive: true });
     await fs.copyFile(uploadPath, inputCopy);
+    if (consumedSessionId) {
+      await releaseUploadSession(consumedSessionId);
+      consumedSessionId = null;
+    }
     res.status(202).json({
       jobId: job.id,
       status: job.status,
@@ -221,9 +251,10 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
     });
   } catch (error) {
     console.error(error);
+    if (consumedSessionId) await releaseUploadSession(consumedSessionId).catch(() => {});
     res.status(400).json({ error: error.message || "Could not start job" });
   } finally {
-    await cleanupUpload(uploadPath);
+    if (ownsUpload) await cleanupUpload(uploadPath);
   }
 });
 
@@ -279,6 +310,7 @@ app.get("/api/jobs/:id/file/:kind", async (req, res) => {
 });
 
 scheduleJobCleanup();
+scheduleSessionCleanup();
 
 app.listen(PORT, HOST, () => {
   console.log(`Master Lab API listening on http://${HOST}:${PORT}`);

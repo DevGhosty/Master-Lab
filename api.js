@@ -306,6 +306,7 @@ export async function loadFileViaApi(file, options = {}) {
     }
 
     state.apiProbe = payload.probe;
+    state.apiSessionId = payload.sessionId || null;
     state.analysis = normalizeAnalysisMetrics(payload.analysis);
     state.originalWaveformPeaks = payload.waveformPeaks || null;
     state.bitDepth = payload.probe.bitDepth;
@@ -394,13 +395,19 @@ export async function runMasteringViaApi() {
   // #endregion
 
   try {
-    setStatus("Uploading file for mastering… Large tracks may take 1–2 minutes before processing starts.");
-    setProgress("prepare", 52, "Uploading for master");
-    await nextFrame();
-
     const controls = readControls();
     const form = new FormData();
-    form.append("file", state.file);
+    if (state.apiSessionId) {
+      form.append("sessionId", state.apiSessionId);
+      setStatus(COPY.status.masteringInProgress);
+      setProgress("prepare", 52, "Starting master job");
+    } else {
+      setStatus("Uploading file for mastering… Large tracks may take 1–2 minutes before processing starts.");
+      setProgress("prepare", 52, "Uploading for master");
+      form.append("file", state.file);
+    }
+    await nextFrame();
+
     form.append("preset", state.selectedPreset);
     form.append("intensity", String(controls.intensity));
     form.append("warmth", String(controls.warmth));
@@ -463,6 +470,9 @@ export async function runMasteringViaApi() {
       }
       // #endregion
       if (!statusResponse.ok) {
+        if (statusResponse.status === 404) {
+          throw new Error(COPY.errors.masterJobLost);
+        }
         throw new Error(job.error || "Job status failed");
       }
       const stepPercent = Math.min(90, 55 + Math.round((job.progress || 0) * 0.35));
@@ -534,9 +544,12 @@ export async function runMasteringViaApi() {
     }, isFetchTimeoutError(error) ? "A" : "D");
     // #endregion
     setAppPhase("error");
-    const message = isFetchTimeoutError(error) || isServerReachabilityError(error)
-      ? COPY.errors.masterServerUnavailable
-      : COPY.errors.masterFailed;
+    let message = COPY.errors.masterFailed;
+    if (error?.message === COPY.errors.masterJobLost) {
+      message = COPY.errors.masterJobLost;
+    } else if (isFetchTimeoutError(error) || isServerReachabilityError(error)) {
+      message = COPY.errors.masterServerUnavailable;
+    }
     setStatusBanner(message, "error");
     setStatus(message);
     setProgress("prepare", 0, "Mastering failed");

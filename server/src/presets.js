@@ -56,9 +56,9 @@ function clamp(value, min, max) {
 
 /**
  * Build mastering filter chain for FFmpeg (-af).
- * Uses loudnorm for LUFS targeting plus EQ/compression per preset.
+ * Uses a fast ebur128 measurement + volume gain instead of loudnorm in the render pass.
  */
-export function buildMasterFilter(presetKey, controls = {}) {
+export function buildMasterFilter(presetKey, controls = {}, options = {}) {
   const preset = PRESETS[presetKey] || PRESETS.streaming;
   const intensity = clamp(Number(controls.intensity ?? preset.intensity), 0, 1);
   const warmth = clamp(Number(controls.warmth ?? preset.warmth), 0, 1);
@@ -82,8 +82,6 @@ export function buildMasterFilter(presetKey, controls = {}) {
   const deess = presetKey === "warm" ? "deesser=i=0.4" : null;
   const treble = presetKey === "bright" ? `treble=g=${(1 + air * 2).toFixed(2)}` : null;
 
-  const loudnorm = `loudnorm=I=${target}:TP=${tp}:LRA=11:linear=true`;
-
   let limiter = `alimiter=limit=${Math.pow(10, tp / 20).toFixed(4)}:attack=5:release=50`;
   if (presetKey === "loud") {
     limiter = `alimiter=limit=${Math.pow(10, (tp - 0.2) / 20).toFixed(4)}:attack=3:release=40`;
@@ -92,7 +90,14 @@ export function buildMasterFilter(presetKey, controls = {}) {
   const parts = [highpass, lowShelf, peaking, highShelf, compressor];
   if (deess) parts.push(deess);
   if (treble) parts.push(treble);
-  parts.push(loudnorm, limiter, "lowpass=f=19000");
+
+  const measuredLufs = options.measuredLufs;
+  if (measuredLufs != null && Number.isFinite(measuredLufs)) {
+    const gainDb = clamp(target - measuredLufs, -12, 12);
+    parts.push(`volume=${gainDb.toFixed(2)}dB`);
+  }
+
+  parts.push(limiter, "lowpass=f=19000");
 
   return parts.join(",");
 }

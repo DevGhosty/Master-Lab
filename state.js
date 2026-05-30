@@ -22,6 +22,7 @@ export const state = {
   mp3Worker: null,
   mp3WorkerFailed: false,
   apiProbe: null,
+  apiSessionId: null,
   originalWaveformPeaks: null,
   masteredWaveformPeaks: null,
   masterJobId: null,

@@ -50,6 +50,7 @@ export const COPY = {
     serverWakeup: "Server may be waking up—tap Wake server above the upload area, then try again.",
     serverUnavailable: "Could not reach the mastering server while analyzing your file. Large files can take several minutes on free hosting—try again or use Wake server above.",
     masterServerUnavailable: "Could not reach the mastering server while rendering your master. Large files can take several minutes on free hosting—try again.",
+    masterJobLost: "The server restarted while mastering (often after a deploy). Wait for the green server dot, then click Master file again.",
     serverRetryStep: "Tap Wake server above, wait for the green dot, then upload again.",
     masterFailed: "Mastering failed. Your original file was not changed.",
   },

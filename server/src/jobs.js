@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { JOB_TTL_MS, MAX_CHANNELS, MAX_DURATION_SECONDS } from "./constants.js";
 import { buildMasterFilter } from "./presets.js";
-import { extractWaveformPeaks, masterToFiles, probeAudioFile, removeDir } from "./ffmpeg.js";
+import { masterToFiles, measureIntegratedLoudness, probeAudioFile, removeDir } from "./ffmpeg.js";
 
 function validateProbe(probe) {
   if (probe.duration > MAX_DURATION_SECONDS) {
@@ -51,10 +51,13 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     const probe = await probeAudioFile(inputPath);
     validateProbe(probe);
     job.progress = 15;
+    job.message = "Measuring loudness";
+    const loudness = await measureIntegratedLoudness(inputPath);
+    job.progress = 20;
     job.message = "Applying mastering preset";
-    const filter = buildMasterFilter(preset, controls);
+    const filter = buildMasterFilter(preset, controls, { measuredLufs: loudness.input_i });
     job.progress = 25;
-    job.message = "Rendering master (this can take several minutes)";
+    job.message = "Rendering master and exports";
     const result = await masterToFiles(inputPath, job.dir, filter, ({ progress, message }) => {
       job.progress = progress;
       job.message = message;
@@ -67,7 +70,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
       limiterReductionDb: 0,
       preset,
       serverMaster: true,
-      waveformPeaks: await extractWaveformPeaks(result.files.wav32, 800),
+      waveformPeaks: result.waveformPeaks || null,
     };
     job.status = "done";
     job.progress = 100;
