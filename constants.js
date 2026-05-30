@@ -11,6 +11,7 @@ export const LUFS_RELATIVE_GATE_OFFSET = -10;
 export const API_FETCH_TIMEOUT_MS = 45000;
 export const API_ANALYZE_TIMEOUT_MS = 300000;
 export const API_MASTER_START_TIMEOUT_MS = 300000;
+export const API_MASTER_DOWNLOAD_TIMEOUT_MS = 300000;
 export const API_HEALTH_TIMEOUT_MS = 8000;
 export const API_HEALTH_WAKE_TIMEOUT_MS = 15000;
 export const API_HEALTH_POLL_ONLINE_MS = 60000;
@@ -50,6 +51,7 @@ export const COPY = {
     serverWakeup: "Server may be waking up—tap Wake server above the upload area, then try again.",
     serverUnavailable: "Could not reach the mastering server while analyzing your file. Large files can take several minutes on free hosting—try again or use Wake server above.",
     masterServerUnavailable: "Could not reach the mastering server while rendering your master. Large files can take several minutes on free hosting—try again.",
+    masterDownloadUnavailable: "Your master finished, but one or more download files could not be fetched from the server. Try Master file again, or download again after the server is awake.",
     masterJobLost: "The server restarted while mastering (often after a deploy). Wait for the green server dot, then click Master file again.",
     serverRetryStep: "Tap Wake server above, wait for the green dot, then upload again.",
     masterFailed: "Mastering failed. Your original file was not changed.",

@@ -6,6 +6,7 @@ import {
   API_FETCH_TIMEOUT_MS,
   API_ANALYZE_TIMEOUT_MS,
   API_MASTER_START_TIMEOUT_MS,
+  API_MASTER_DOWNLOAD_TIMEOUT_MS,
   API_HEALTH_TIMEOUT_MS,
   API_HEALTH_WAKE_TIMEOUT_MS,
   API_HEALTH_POLL_ONLINE_MS,
@@ -383,6 +384,8 @@ export async function runMasteringViaApi() {
   disableExports();
   els.masterButton.disabled = true;
   els.masterButton.textContent = "Mastering...";
+  let masterJobDone = false;
+  let downloadsReady = false;
 
   // #region agent log
   debugLog("api.js:runMasteringViaApi:start", "mastering started", {
@@ -494,6 +497,7 @@ export async function runMasteringViaApi() {
       throw new Error(job.error || "Mastering failed on server");
     }
 
+    masterJobDone = true;
     state.masteredAnalysis = job.meta.masteredAnalysis;
     state.masteredWaveformPeaks = job.meta.waveformPeaks || null;
     state.limiterReductionDb = job.meta.limiterReductionDb || 0;
@@ -522,6 +526,7 @@ export async function runMasteringViaApi() {
     state.wav24Url = URL.createObjectURL(wav24Blob);
     state.wav16Url = URL.createObjectURL(wav16Blob);
     state.mp3Url = URL.createObjectURL(mp3Blob);
+    downloadsReady = true;
 
     enableDownload(els.wavDownloadLink, state.wavUrl, `${baseName}-master-32float.wav`, "Download WAV 32-bit float");
     enableDownload(els.wav24DownloadLink, state.wav24Url, `${baseName}-master-24bit.wav`, "Download WAV 24-bit PCM");
@@ -550,12 +555,23 @@ export async function runMasteringViaApi() {
       isTimeout: isFetchTimeoutError(error),
       isReachability: isServerReachabilityError(error),
       serverStatus,
+      masterJobDone,
+      downloadsReady,
     }, isFetchTimeoutError(error) ? "A" : "D");
     // #endregion
+    if (downloadsReady || (masterJobDone && state.masteredPreviewUrl && state.wavUrl)) {
+      setAppPhase("mastered");
+      setStatusBanner(COPY.status.masterReady, "success");
+      setStatus(COPY.status.masterReadyServer);
+      setProgress("done", 100, "Master ready");
+      return;
+    }
     setAppPhase("error");
     let message = COPY.errors.masterFailed;
     if (error?.message === COPY.errors.masterJobLost) {
       message = COPY.errors.masterJobLost;
+    } else if (masterJobDone) {
+      message = COPY.errors.masterDownloadUnavailable;
     } else if (isFetchTimeoutError(error) || isServerReachabilityError(error)) {
       message = COPY.errors.masterServerUnavailable;
     }
@@ -569,7 +585,11 @@ export async function runMasteringViaApi() {
 }
 
 async function fetchJobFileBlob(jobId, kind) {
-  const response = await fetchWithTimeout(`${getApiBase()}/api/jobs/${jobId}/file/${kind}`);
+  const response = await fetchWithTimeout(
+    `${getApiBase()}/api/jobs/${jobId}/file/${kind}`,
+    {},
+    API_MASTER_DOWNLOAD_TIMEOUT_MS,
+  );
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `Could not download ${kind}`);
