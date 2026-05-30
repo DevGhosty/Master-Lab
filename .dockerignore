@@ -1,0 +1,9 @@
+server/node_modules
+node_modules
+.git
+*.wav
+*.mp3
+*.flac
+*.aiff
+*.m4a
+*.ogg

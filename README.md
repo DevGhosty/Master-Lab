@@ -1,40 +1,47 @@
 # Master Lab
 
-A browser-only audio mastering prototype. It lets users upload an audio file, review an original audio check, choose a mastering goal, render a local master, compare original vs mastered playback, and download the mastered file for free.
+Master Lab is a free, browser-based audio mastering tool. Upload a track, review an automatic source check, pick a mastering goal, preview the result against the original, and download masters in common formats. No account and no paywall.
 
-## Run
+## Where to use it
 
-Open `index.html` in a modern browser. No server or install step is required.
-
-For public hosting, this static app can be served from GitHub Pages. The target repo is:
-
-```text
-https://github.com/DevGhosty/Master-Lab.git
-```
+- **Live app:** [https://devghosty.github.io/Master-Lab/](https://devghosty.github.io/Master-Lab/)
+- **Source code:** [https://github.com/DevGhosty/Master-Lab](https://github.com/DevGhosty/Master-Lab)
 
 ## What it does
 
-- Decodes audio with the browser Web Audio API.
-- Shows honest source metadata, readiness, and warnings before mastering.
-- Supports Balanced, Loud, Warm, Bright, Bass Boost, and Streaming Ready presets.
-- Runs a local offline mastering chain with restrained EQ, light saturation, bus compression, loudness-aware gain staging, and lookahead peak limiting.
-- Measures browser-side BS.1770-style integrated LUFS with K-weighting and gating.
-- Estimates true peak with oversampled interpolation and validates the final ceiling.
-- Shows DC offset, stereo correlation, crest factor, silence, clipping, and broad tonal balance diagnostics.
-- Exports WAV 32-bit float locally.
-- Exports WAV 24-bit PCM and WAV 16-bit dithered locally.
-- Exports MP3 320 kbps locally using a bundled in-browser encoder.
+1. **Upload** — WAV, AIFF, FLAC, MP3, M4A, AAC, or OGG (whatever your browser can decode).
+2. **Original audio check** — File metadata, integrated loudness (LUFS), true peak, crest factor, silence, clipping hints, stereo correlation, and readiness warnings before you commit to a master.
+3. **Master** — Choose a preset (Balanced, Loud, Warm, Bright, Bass Boost, or Streaming Ready) and optional fine-tuning (intensity, warmth, air, trim leading silence).
+4. **Compare** — Waveform view and A/B playback: original, mastered, or overlay; optional volume-matched preview.
+5. **Export** — WAV 32-bit float, WAV 24-bit PCM, WAV 16-bit dithered, and MP3 320 kbps.
 
-## Privacy and limits
+All processing is designed to stay on your machine when the app runs in **local mode**. When a server API URL is configured for the hosted build, analyze and master run on that server instead; audio is processed in temporary storage and not kept after the job finishes.
 
-- Audio is decoded, analyzed, mastered, previewed, and exported in the browser.
-- The app does not upload, store, or retain user audio files.
-- Files larger than 150 MB are rejected before decode.
-- Files longer than 15 minutes are rejected after decode to protect browser memory.
-- This prototype supports mono and stereo audio.
+## Technical overview
 
-## Notes
+| Area | Implementation |
+|------|----------------|
+| UI | Static HTML, CSS, vanilla JavaScript (no framework) |
+| Decode & playback | Web Audio API (`AudioContext`, `decodeAudioData`) |
+| Analysis | In-browser BS.1770-style integrated LUFS (K-weighting, gating), oversampled true-peak estimate, band balance, DC offset, silence and clipping heuristics |
+| Mastering (local) | `OfflineAudioContext` chain: high-pass, shelves/peaking EQ, light waveshaper saturation, bus compression, loudness-aware gain, lookahead peak limiter, ceiling normalize |
+| Mastering (server) | Optional Node API with FFmpeg/ffprobe; preset-mapped filter graphs (not bit-identical to the browser chain) |
+| MP3 (local) | Bundled [lamejs](https://github.com/zhuker/lamejs) 1.2.1 (`vendor/lame.min.js`), encode in a Web Worker when supported |
+| Exports (local) | WAV encoders in JS; MP3 via lamejs |
+| Privacy model | Local mode: no upload. Server mode: ephemeral files only |
+| Hosting | GitHub Pages for the UI; optional Docker API (`server/`) for faster analyze/master on long files |
 
-The LUFS meter is a browser-side BS.1770-style implementation, not a certified broadcast meter. True peak is oversampled and safer than sample peak, but a dedicated mastering backend with FFmpeg/pyloudnorm would still be the next step for production-grade verification.
+## Limits
 
-All exports are fully local and offline. WAV (32-bit float, 24-bit PCM, 16-bit dithered) and MP3 320 are encoded entirely in the browser. MP3 uses the bundled `vendor/lame.min.js` (lamejs 1.2.1) encoder, so no network access or CDN is required and the Content-Security-Policy blocks all external connections.
+- Mono or stereo only  
+- Max file size: 150 MB  
+- Max length: 15 minutes  
+- LUFS and true peak are useful estimates, not certified broadcast meters  
+
+## Repository layout
+
+- `index.html`, `styles.css`, `app.js` — application UI and logic  
+- `vendor/lame.min.js` — MP3 encoder (local mode)  
+- `mp3-worker.js` — background MP3 encoding  
+- `config.js` — optional API base URL for server-backed mode on the hosted site  
+- `server/` — ephemeral FFmpeg API (companion to the static app)  

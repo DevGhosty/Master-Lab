@@ -72,6 +72,27 @@ const TRUE_PEAK_OVERSAMPLE = 4;
 const LUFS_ABSOLUTE_GATE = -70;
 const LUFS_RELATIVE_GATE_OFFSET = -10;
 
+function getApiBase() {
+  const base = (window.MASTER_LAB_API || "").trim().replace(/\/$/, "");
+  return base;
+}
+
+function isApiMode() {
+  return Boolean(getApiBase());
+}
+
+function getProbeBuffer() {
+  if (state.originalBuffer) return state.originalBuffer;
+  if (state.apiProbe) {
+    return {
+      duration: state.apiProbe.duration,
+      numberOfChannels: state.apiProbe.channels,
+      sampleRate: state.apiProbe.sampleRate,
+    };
+  }
+  return null;
+}
+
 const state = {
   audioContext: null,
   originalBuffer: null,
@@ -95,6 +116,10 @@ const state = {
   progressStep: null,
   mp3Worker: null,
   mp3WorkerFailed: false,
+  apiProbe: null,
+  originalWaveformPeaks: null,
+  masteredWaveformPeaks: null,
+  masterJobId: null,
 };
 
 const els = {
@@ -328,6 +353,10 @@ async function loadFile(file) {
   state.fileName = sanitizeBaseName(file.name);
   state.fileExtension = getExtension(file.name);
 
+  if (isApiMode()) {
+    return loadFileViaApi(file);
+  }
+
   if (!file.type.startsWith("audio/") && !SUPPORTED_EXTENSIONS.has(state.fileExtension)) {
     renderDecodeError(file, "This file type is not supported yet.");
     return;
@@ -389,6 +418,64 @@ async function loadFile(file) {
   } catch (error) {
     console.error(error);
     renderDecodeError(file, "We could not decode this audio file. Try exporting it as WAV or MP3 and upload again.");
+  }
+}
+
+async function loadFileViaApi(file) {
+  if (!file.type.startsWith("audio/") && !SUPPORTED_EXTENSIONS.has(state.fileExtension)) {
+    renderDecodeError(file, "This file type is not supported yet.");
+    return;
+  }
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    renderDecodeError(file, `This file is larger than ${formatBytes(MAX_FILE_SIZE_BYTES)}. Try a shorter export or a smaller file.`);
+    return;
+  }
+
+  setStatus("Uploading to server for analysis...");
+  setProgress("analyze", 12, "Uploading audio");
+
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`${getApiBase()}/api/analyze`, { method: "POST", body: form });
+    const payload = await response.json();
+    if (!response.ok) {
+      renderDecodeError(file, payload.error || "Server analysis failed.");
+      return;
+    }
+
+    state.apiProbe = payload.probe;
+    state.analysis = payload.analysis;
+    state.originalWaveformPeaks = payload.waveformPeaks || null;
+    state.bitDepth = payload.probe.bitDepth;
+    state.originalUrl = URL.createObjectURL(file);
+
+    const probeBuffer = getProbeBuffer();
+    const warnings = buildWarnings(file, probeBuffer, state.analysis);
+    const readiness = getReadiness(warnings, state.analysis);
+
+    els.originalPlayer.src = state.originalUrl;
+    els.originalPlayer.load();
+    els.trackTitle.textContent = file.name.replace(/\.[^/.]+$/, "") || file.name;
+    els.trackDetails.textContent =
+      `${probeBuffer.numberOfChannels} channel${probeBuffer.numberOfChannels === 1 ? "" : "s"} · ${probeBuffer.sampleRate.toLocaleString()} Hz · ${formatTime(probeBuffer.duration)}`;
+    els.durationTime.textContent = formatTime(probeBuffer.duration);
+
+    renderAnalysis(file, probeBuffer, state.analysis, warnings, readiness);
+    updateStats();
+    drawWaveform();
+    setPlaybackSource("original", false);
+    setProgress("prepare", 45, "Ready to master");
+    setStatus("Original audio check complete (server). Choose a preset and master when ready.");
+
+    els.masterButton.disabled = state.analysis.peak < 0.00001;
+    els.playButton.disabled = false;
+    els.seekSlider.disabled = false;
+    els.resetButton.disabled = false;
+    els.emptyWave.classList.add("hidden");
+  } catch (error) {
+    console.error(error);
+    renderDecodeError(file, "Could not reach the mastering server. Check config.js and try again.");
   }
 }
 
@@ -1131,7 +1218,11 @@ function getBandpassRms(samples, sampleRate, step, lowCutoff, highCutoff) {
 }
 
 async function runMastering() {
-  if (!state.originalBuffer) return;
+  if (!state.originalBuffer && !state.apiProbe) return;
+
+  if (isApiMode()) {
+    return runMasteringViaApi();
+  }
 
   pausePlayback();
   disableExports();
@@ -1176,6 +1267,117 @@ async function runMastering() {
     els.masterButton.disabled = false;
     els.masterButton.textContent = "Master file";
   }
+}
+
+async function runMasteringViaApi() {
+  if (!state.file || !state.apiProbe) return;
+
+  pausePlayback();
+  disableExports();
+  els.masterButton.disabled = true;
+  els.masterButton.textContent = "Mastering...";
+
+  try {
+    setStatus("Uploading to server for mastering...");
+    setProgress("prepare", 55, "Uploading to server");
+    await nextFrame();
+
+    const controls = readControls();
+    const form = new FormData();
+    form.append("file", state.file);
+    form.append("preset", state.selectedPreset);
+    form.append("intensity", String(controls.intensity));
+    form.append("warmth", String(controls.warmth));
+    form.append("air", String(controls.air));
+    form.append("trimSilence", controls.trimSilence ? "true" : "false");
+
+    const startResponse = await fetch(`${getApiBase()}/api/master/jobs`, { method: "POST", body: form });
+    const startPayload = await startResponse.json();
+    if (!startResponse.ok) {
+      throw new Error(startPayload.error || "Could not start mastering job");
+    }
+
+    state.masterJobId = startPayload.jobId;
+    setStatus(`Applying ${PRESETS[state.selectedPreset].label} preset on server...`);
+    setProgress("apply", 70, "Applying mastering preset");
+
+    let job = startPayload;
+    while (job.status === "queued" || job.status === "processing") {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const statusResponse = await fetch(`${getApiBase()}/api/jobs/${state.masterJobId}`);
+      job = await statusResponse.json();
+      if (!statusResponse.ok) {
+        throw new Error(job.error || "Job status failed");
+      }
+      const stepPercent = Math.min(90, 55 + Math.round((job.progress || 0) * 0.35));
+      setProgress(job.progress >= 84 ? "preview" : "apply", stepPercent, job.message || "Processing on server");
+      setStatus(job.message || "Mastering on server...");
+    }
+
+    if (job.status !== "done") {
+      throw new Error(job.error || "Mastering failed on server");
+    }
+
+    state.masteredAnalysis = job.meta.masteredAnalysis;
+    state.masteredWaveformPeaks = job.meta.waveformPeaks || null;
+    state.limiterReductionDb = job.meta.limiterReductionDb || 0;
+
+    setStatus("Downloading mastered files...");
+    setProgress("download", 92, "Preparing download");
+
+    const baseName = state.fileName || "mastered";
+    const previewBlob = await fetchJobFileBlob(state.masterJobId, "preview");
+    if (state.masteredPreviewUrl) URL.revokeObjectURL(state.masteredPreviewUrl);
+    state.masteredPreviewUrl = URL.createObjectURL(previewBlob);
+    els.masteredPlayer.src = state.masteredPreviewUrl;
+    els.masteredPlayer.load();
+
+    const wav32Blob = await fetchJobFileBlob(state.masterJobId, "wav32");
+    const wav24Blob = await fetchJobFileBlob(state.masterJobId, "wav24");
+    const wav16Blob = await fetchJobFileBlob(state.masterJobId, "wav16");
+    const mp3Blob = await fetchJobFileBlob(state.masterJobId, "mp3");
+
+    if (state.wavUrl) URL.revokeObjectURL(state.wavUrl);
+    if (state.wav24Url) URL.revokeObjectURL(state.wav24Url);
+    if (state.wav16Url) URL.revokeObjectURL(state.wav16Url);
+    if (state.mp3Url) URL.revokeObjectURL(state.mp3Url);
+
+    state.wavUrl = URL.createObjectURL(wav32Blob);
+    state.wav24Url = URL.createObjectURL(wav24Blob);
+    state.wav16Url = URL.createObjectURL(wav16Blob);
+    state.mp3Url = URL.createObjectURL(mp3Blob);
+
+    enableDownload(els.wavDownloadLink, state.wavUrl, `${baseName}-master-32float.wav`, "Download WAV 32-bit float");
+    enableDownload(els.wav24DownloadLink, state.wav24Url, `${baseName}-master-24bit.wav`, "Download WAV 24-bit PCM");
+    enableDownload(els.wav16DownloadLink, state.wav16Url, `${baseName}-master-16bit-dithered.wav`, "Download WAV 16-bit dithered");
+    enableDownload(els.mp3DownloadLink, state.mp3Url, `${baseName}-master-320.mp3`, "Download MP3 320");
+    els.encoderStatus.textContent = "MP3 320 encoded on server (ephemeral processing).";
+    els.exportText.textContent = "Your master is ready. Download it for free.";
+
+    els.masteredTab.disabled = false;
+    els.compareTab.disabled = false;
+    els.volumeMatchToggle.disabled = false;
+    updateStats();
+    setPlaybackSource("mastered", false);
+    setProgress("done", 100, "Master ready");
+    setStatus("Your master is ready. Processed on server and deleted after download.");
+  } catch (error) {
+    console.error(error);
+    setStatus("Mastering failed. Your original file was not changed.");
+    setProgress("prepare", 0, "Mastering failed");
+  } finally {
+    els.masterButton.disabled = false;
+    els.masterButton.textContent = "Master file";
+  }
+}
+
+async function fetchJobFileBlob(jobId, kind) {
+  const response = await fetch(`${getApiBase()}/api/jobs/${jobId}/file/${kind}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `Could not download ${kind}`);
+  }
+  return response.blob();
 }
 
 function nextFrame() {
@@ -1334,12 +1536,12 @@ function disableExports() {
 }
 
 function updateStats() {
-  if (!state.originalBuffer || !state.analysis) return;
+  if (!state.analysis) return;
 
   els.originalRms.textContent = formatLufs(state.analysis.loudnessDb);
   els.originalPeak.textContent = formatDbtp(state.analysis.truePeakDb);
 
-  if (state.masteredBuffer && state.masteredAnalysis) {
+  if (state.masteredAnalysis) {
     const delta = state.masteredAnalysis.loudnessDb - state.analysis.loudnessDb;
     const limiterText = state.limiterReductionDb < -0.1 ? ` Limiter reduced peaks by up to ${Math.abs(state.limiterReductionDb).toFixed(1)} dB.` : "";
     els.masterRms.textContent = formatLufs(state.masteredAnalysis.loudnessDb);
@@ -1377,16 +1579,45 @@ function drawWaveform() {
   ctx.lineTo(rect.width, rect.height / 2);
   ctx.stroke();
 
-  if (state.activeSource === "compare" && state.originalBuffer && state.masteredBuffer) {
+  if (
+    state.activeSource === "compare" &&
+    state.originalWaveformPeaks &&
+    state.masteredWaveformPeaks
+  ) {
+    drawPeaksWaveform(ctx, state.originalWaveformPeaks, rect, "#64716d", 0.68, -0.08);
+    drawPeaksWaveform(ctx, state.masteredWaveformPeaks, rect, "#d98928", 0.6, 0.08);
+  } else if (state.activeSource === "compare" && state.originalBuffer && state.masteredBuffer) {
     drawBufferWaveform(ctx, state.originalBuffer, rect, "#64716d", 0.68, -0.08);
     drawBufferWaveform(ctx, state.masteredBuffer, rect, "#d98928", 0.6, 0.08);
     drawDifferenceBand(ctx, state.originalBuffer, state.masteredBuffer, rect);
+  } else if (state.activeSource === "mastered" && state.masteredWaveformPeaks) {
+    drawPeaksWaveform(ctx, state.masteredWaveformPeaks, rect, "#d98928", 0.9, 0);
+  } else if (state.activeSource === "original" && state.originalWaveformPeaks && !state.originalBuffer) {
+    drawPeaksWaveform(ctx, state.originalWaveformPeaks, rect, "#0a7b75", 0.9, 0);
   } else {
     const buffer = state.activeSource === "mastered" ? state.masteredBuffer : state.originalBuffer;
     if (buffer) {
       drawBufferWaveform(ctx, buffer, rect, state.activeSource === "mastered" ? "#d98928" : "#0a7b75", 0.9, 0);
     }
   }
+}
+
+function drawPeaksWaveform(ctx, peaks, rect, color, alpha, offsetRatio) {
+  if (!peaks?.length) return;
+  const width = rect.width;
+  const height = rect.height;
+  const mid = height / 2 + height * offsetRatio;
+  const maxAmp = height * 0.42;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  for (let x = 0; x < width; x += 1) {
+    const index = Math.min(peaks.length - 1, Math.floor((x / width) * peaks.length));
+    const { min, max } = peaks[index];
+    const y1 = mid + min * maxAmp;
+    const y2 = mid + max * maxAmp;
+    ctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawBufferWaveform(ctx, buffer, rect, color, alpha, offsetRatio) {
@@ -1450,8 +1681,9 @@ function activePlayer() {
 }
 
 function setPlaybackSource(source, preserveTime = true) {
-  if (source === "mastered" && !state.masteredBuffer) return;
-  if (source === "compare" && !state.masteredBuffer) return;
+  const hasMastered = Boolean(state.masteredBuffer || state.masteredPreviewUrl);
+  if (source === "mastered" && !hasMastered) return;
+  if (source === "compare" && !hasMastered) return;
 
   const current = activePlayer();
   const time = preserveTime ? current.currentTime : 0;
@@ -1519,7 +1751,7 @@ function updatePlaybackProgress() {
   els.seekSlider.value = Math.round(progress * 1000).toString();
   els.waveformWrap.setAttribute("aria-valuenow", Math.round(progress * 1000).toString());
   els.playhead.style.left = `${progress * 100}%`;
-  els.playhead.classList.toggle("visible", duration > 0 && state.originalBuffer);
+  els.playhead.classList.toggle("visible", duration > 0 && (state.originalBuffer || state.apiProbe));
 
   if (!player.paused) {
     state.animationId = requestAnimationFrame(updatePlaybackProgress);
@@ -1527,8 +1759,10 @@ function updatePlaybackProgress() {
 }
 
 function getActiveDuration() {
-  const buffer = state.activeSource === "mastered" ? state.masteredBuffer : state.originalBuffer;
-  return buffer?.duration ?? 0;
+  if (state.activeSource === "mastered") {
+    return state.masteredBuffer?.duration ?? state.apiProbe?.duration ?? 0;
+  }
+  return state.originalBuffer?.duration ?? state.apiProbe?.duration ?? 0;
 }
 
 function seekPlayback() {
@@ -1689,6 +1923,10 @@ function resetMasterOnly() {
   if (state.mp3Url) URL.revokeObjectURL(state.mp3Url);
   state.masteredBuffer = null;
   state.masteredAnalysis = null;
+  state.apiProbe = null;
+  state.originalWaveformPeaks = null;
+  state.masteredWaveformPeaks = null;
+  state.masterJobId = null;
   state.limiterReductionDb = 0;
   state.masteredPreviewUrl = null;
   state.wavUrl = null;
@@ -1826,7 +2064,7 @@ els.presetButtons.forEach((button) => {
 });
 
 window.addEventListener("resize", () => {
-  if (state.originalBuffer) drawWaveform();
+  if (state.originalBuffer || state.originalWaveformPeaks) drawWaveform();
 });
 
 window.addEventListener("pagehide", () => {
@@ -1834,6 +2072,28 @@ window.addEventListener("pagehide", () => {
   disposeMp3Worker();
 });
 
-selectPreset("streaming", true);
-setProgress("analyze", 0, "Ready");
-drawEmptyCanvas();
+function initApp() {
+  if (isApiMode()) {
+    setStatus("Upload audio for server-side analysis (processed and deleted immediately).");
+    const uploadNote = document.querySelector("#uploadPrivacyNote");
+    if (uploadNote) {
+      uploadNote.textContent =
+        "Audio is sent to the mastering server for analysis and rendering, then deleted. Original playback stays in your browser.";
+    }
+  } else {
+    loadLocalEncoderScript();
+  }
+  selectPreset("streaming", true);
+  setProgress("analyze", 0, "Ready");
+  drawEmptyCanvas();
+}
+
+function loadLocalEncoderScript() {
+  if (window.lamejs?.Mp3Encoder) return;
+  const script = document.createElement("script");
+  script.src = "vendor/lame.min.js";
+  script.defer = true;
+  document.head.appendChild(script);
+}
+
+initApp();

@@ -1,0 +1,16 @@
+# Render Blueprint — free web service (no Fly.io card required).
+# Dashboard: New → Blueprint → connect DevGhosty/Master-Lab repo.
+# https://render.com/docs/free
+
+services:
+  - type: web
+    name: master-lab-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://devghosty.github.io,http://localhost:8100,http://127.0.0.1:8100
+      - key: CORS_ALLOW_PLATFORM_HOSTS
+        value: "true"

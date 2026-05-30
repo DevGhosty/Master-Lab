@@ -9,3 +9,4 @@ Thumbs.db
 *.flac
 *.m4a
 *.ogg
+server/node_modules/

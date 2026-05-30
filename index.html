@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'self' http://localhost:8080 http://127.0.0.1:8080 https:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     />
     <title>Master Lab</title>
     <link rel="stylesheet" href="styles.css" />
@@ -29,7 +29,7 @@
               <span class="step-number">1</span>
               <div>
                 <h2>Upload audio</h2>
-                <p>No audio is uploaded or stored.</p>
+                <p id="uploadPrivacyNote">No audio is uploaded or stored when using in-browser mode.</p>
               </div>
             </div>
             <label class="dropzone" id="dropzone">
@@ -239,7 +239,7 @@
       </section>
     </main>
 
-    <script src="vendor/lame.min.js" defer></script>
+    <script src="config.js"></script>
     <script src="app.js" defer></script>
   </body>
 </html>
