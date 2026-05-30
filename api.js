@@ -11,6 +11,7 @@ import {
   API_HEALTH_POLL_OFFLINE_MS,
   API_HEALTH_WAKE_ATTEMPTS,
   API_HEALTH_WAKE_RETRY_MS,
+  API_LOCAL_DEV_ORIGINS,
   SUPPORTED_EXTENSIONS,
   MAX_FILE_SIZE_BYTES,
 } from "./constants.js";
@@ -43,6 +44,24 @@ import { disableExports, enableDownload } from "./export.js";
 let serverStatus = "unknown";
 let statusPollTimer = null;
 let wakeInProgress = false;
+
+// #region agent log
+function debugLog(location, message, data = {}, hypothesisId = "") {
+  fetch("http://127.0.0.1:7879/ingest/ad2e6eb4-20ca-46db-bc4c-e6cc64f15731", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "3d1c5b" },
+    body: JSON.stringify({
+      sessionId: "3d1c5b",
+      location,
+      message,
+      data,
+      hypothesisId,
+      runId: "pre-fix",
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+// #endregion
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -79,6 +98,17 @@ function markServerOffline() {
   scheduleServerStatusPoll();
 }
 
+function isLocalDevCorsBlocked() {
+  if (typeof window === "undefined") return false;
+  const origin = window.location.origin;
+  if (!origin.includes("localhost") && !origin.includes("127.0.0.1")) return false;
+  return !API_LOCAL_DEV_ORIGINS.has(origin);
+}
+
+function localDevStatusDetail() {
+  return isLocalDevCorsBlocked() ? COPY.serverStatus.wrongLocalPort : "";
+}
+
 export function getServerStatus() {
   return serverStatus;
 }
@@ -110,6 +140,15 @@ export async function checkServerHealth(options = {}) {
     const payload = await response.json().catch(() => ({}));
     return { ok: payload.ok === true || response.ok };
   } catch (error) {
+    // #region agent log
+    debugLog("api.js:checkServerHealth:catch", "health check failed", {
+      errorName: error?.name,
+      errorMessage: error?.message,
+      origin: typeof window !== "undefined" ? window.location.origin : "",
+      localDevCorsBlocked: isLocalDevCorsBlocked(),
+      timeoutMs,
+    }, isLocalDevCorsBlocked() ? "F" : "E");
+    // #endregion
     return {
       ok: false,
       error: isFetchTimeoutError(error) ? "timeout" : "network",
@@ -121,7 +160,7 @@ export async function refreshServerStatus() {
   if (!isApiMode() || wakeInProgress) return false;
   setServerStatus("checking");
   const result = await checkServerHealth();
-  setServerStatus(result.ok ? "online" : "offline");
+  setServerStatus(result.ok ? "online" : "offline", result.ok ? "" : localDevStatusDetail());
   scheduleServerStatusPoll();
   return result.ok;
 }
@@ -137,6 +176,15 @@ export async function wakeServer() {
   for (let attempt = 1; attempt <= API_HEALTH_WAKE_ATTEMPTS; attempt += 1) {
     setServerStatus("waking", `${COPY.serverStatus.waking} (${attempt}/${API_HEALTH_WAKE_ATTEMPTS})`);
     const result = await checkServerHealth({ timeoutMs: API_HEALTH_WAKE_TIMEOUT_MS });
+    // #region agent log
+    debugLog("api.js:wakeServer:attempt", "wake attempt finished", {
+      attempt,
+      ok: result.ok,
+      error: result.error || null,
+      origin: typeof window !== "undefined" ? window.location.origin : "",
+      localDevCorsBlocked: isLocalDevCorsBlocked(),
+    }, result.ok ? "E" : isLocalDevCorsBlocked() ? "F" : "E");
+    // #endregion
     if (result.ok) {
       wakeInProgress = false;
       setServerStatus("online");
@@ -149,7 +197,7 @@ export async function wakeServer() {
   }
 
   wakeInProgress = false;
-  setServerStatus("offline");
+  setServerStatus("offline", localDevStatusDetail());
   scheduleServerStatusPoll();
   return false;
 }
@@ -300,6 +348,16 @@ export async function runMasteringViaApi() {
   els.masterButton.disabled = true;
   els.masterButton.textContent = "Mastering...";
 
+  // #region agent log
+  debugLog("api.js:runMasteringViaApi:start", "mastering started", {
+    fileSize: state.file?.size,
+    fileName: state.fileName,
+    serverStatus,
+    timeoutMs: API_FETCH_TIMEOUT_MS,
+    durationSec: state.apiProbe?.duration,
+  }, "A");
+  // #endregion
+
   try {
     setStatus("Uploading to server for mastering...");
     setProgress("prepare", 55, "Uploading to server");
@@ -314,11 +372,31 @@ export async function runMasteringViaApi() {
     form.append("air", String(controls.air));
     form.append("trimSilence", controls.trimSilence ? "true" : "false");
 
+    const masterPostStartedAt = Date.now();
+    // #region agent log
+    debugLog("api.js:runMasteringViaApi:beforePost", "posting master job", {
+      apiBase: getApiBase(),
+      preset: state.selectedPreset,
+      timeoutMs: API_FETCH_TIMEOUT_MS,
+    }, "A");
+    // #endregion
+
     const startResponse = await fetchWithTimeout(`${getApiBase()}/api/master/jobs`, {
       method: "POST",
       body: form,
     });
     const startPayload = await startResponse.json();
+
+    // #region agent log
+    debugLog("api.js:runMasteringViaApi:afterPost", "master job post finished", {
+      ok: startResponse.ok,
+      status: startResponse.status,
+      elapsedMs: Date.now() - masterPostStartedAt,
+      jobId: startPayload?.jobId || null,
+      error: startPayload?.error || null,
+    }, startResponse.ok ? "B" : "B");
+    // #endregion
+
     if (!startResponse.ok) {
       throw new Error(startPayload.error || "Could not start mastering job");
     }
@@ -328,10 +406,25 @@ export async function runMasteringViaApi() {
     setProgress("apply", 70, "Applying mastering preset");
 
     let job = startPayload;
+    let pollCount = 0;
     while (job.status === "queued" || job.status === "processing") {
       await new Promise((resolve) => setTimeout(resolve, 800));
+      pollCount += 1;
+      const pollStartedAt = Date.now();
       const statusResponse = await fetchWithTimeout(`${getApiBase()}/api/jobs/${state.masterJobId}`);
       job = await statusResponse.json();
+      // #region agent log
+      if (pollCount <= 3 || !statusResponse.ok || job.status === "failed") {
+        debugLog("api.js:runMasteringViaApi:poll", "job poll tick", {
+          pollCount,
+          ok: statusResponse.ok,
+          status: statusResponse.status,
+          jobStatus: job?.status,
+          progress: job?.progress,
+          elapsedMs: Date.now() - pollStartedAt,
+        }, "C");
+      }
+      // #endregion
       if (!statusResponse.ok) {
         throw new Error(job.error || "Job status failed");
       }
@@ -393,6 +486,15 @@ export async function runMasteringViaApi() {
     setStatus(COPY.status.masterReadyServer);
   } catch (error) {
     console.error(error);
+    // #region agent log
+    debugLog("api.js:runMasteringViaApi:catch", "mastering failed", {
+      errorName: error?.name,
+      errorMessage: error?.message,
+      isTimeout: isFetchTimeoutError(error),
+      isReachability: isServerReachabilityError(error),
+      serverStatus,
+    }, isFetchTimeoutError(error) ? "A" : "D");
+    // #endregion
     setAppPhase("error");
     const message = isFetchTimeoutError(error) ? COPY.errors.serverUnavailable : COPY.errors.masterFailed;
     setStatusBanner(message, "error");

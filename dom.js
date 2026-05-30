@@ -151,7 +151,13 @@ export function updateServerStatusUI(status, detail = "") {
   if (els.serverStatusTitle) {
     els.serverStatusTitle.textContent = titles[status] || titles.unknown;
   }
-  els.serverStatusText.textContent = labels[status] || labels.unknown;
+  if (status === "waking") {
+    els.serverStatusText.textContent = detail || labels.waking;
+  } else if (status === "offline" && detail) {
+    els.serverStatusText.textContent = detail;
+  } else {
+    els.serverStatusText.textContent = labels[status] || labels.unknown;
+  }
 
   if (els.wakeServerButton) {
     els.wakeServerButton.hidden = status !== "offline";

@@ -16,6 +16,7 @@ export const API_HEALTH_POLL_ONLINE_MS = 60000;
 export const API_HEALTH_POLL_OFFLINE_MS = 20000;
 export const API_HEALTH_WAKE_ATTEMPTS = 8;
 export const API_HEALTH_WAKE_RETRY_MS = 3000;
+export const API_LOCAL_DEV_ORIGINS = new Set(["http://localhost:8100", "http://127.0.0.1:8100"]);
 
 export const COPY = {
   privacy: {
@@ -56,6 +57,7 @@ export const COPY = {
     waking: "Waking server…",
     wakeButton: "Wake server",
     wakeHint: "Free hosting sleeps when idle. Waking takes 30–60 seconds.",
+    wrongLocalPort: "Local testing must use http://127.0.0.1:8100 so the browser can reach the API.",
     titleChecking: "Checking mastering server",
     titleOnline: "Mastering server is ready",
     titleOffline: "Mastering server is asleep",

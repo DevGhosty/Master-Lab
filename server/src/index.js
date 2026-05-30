@@ -28,10 +28,11 @@ const CORS_ALLOW_PLATFORM_HOSTS = process.env.CORS_ALLOW_PLATFORM_HOSTS !== "fal
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true;
   if (CORS_ORIGINS.includes(origin)) return true;
-  if (!CORS_ALLOW_PLATFORM_HOSTS) return false;
   try {
     const { hostname, protocol } = new URL(origin);
     if (protocol !== "http:" && protocol !== "https:") return false;
+    if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+    if (!CORS_ALLOW_PLATFORM_HOSTS) return false;
     if (hostname.endsWith(".onrender.com")) return true;
     if (hostname.endsWith(".hf.space")) return true;
     if (hostname.endsWith(".fly.dev")) return true;
