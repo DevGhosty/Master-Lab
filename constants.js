@@ -9,6 +9,12 @@ export const TRUE_PEAK_OVERSAMPLE = 4;
 export const LUFS_ABSOLUTE_GATE = -70;
 export const LUFS_RELATIVE_GATE_OFFSET = -10;
 export const API_FETCH_TIMEOUT_MS = 45000;
+export const API_HEALTH_TIMEOUT_MS = 8000;
+export const API_HEALTH_WAKE_TIMEOUT_MS = 15000;
+export const API_HEALTH_POLL_ONLINE_MS = 60000;
+export const API_HEALTH_POLL_OFFLINE_MS = 20000;
+export const API_HEALTH_WAKE_ATTEMPTS = 8;
+export const API_HEALTH_WAKE_RETRY_MS = 3000;
 
 export const COPY = {
   privacy: {
@@ -37,8 +43,17 @@ export const COPY = {
   },
   errors: {
     serverUnreachable: "Could not reach the mastering server. Try again in a moment.",
-    serverWakeup: "Server may be waking up—retry in 30 seconds.",
+    serverWakeup: "Server may be waking up—use Wake server in the header, then upload again.",
+    serverUnavailable: "Could not reach the mastering server. Tap Wake server in the header, wait for the green dot, then try again.",
     masterFailed: "Mastering failed. Your original file was not changed.",
+  },
+  serverStatus: {
+    checking: "Checking server…",
+    online: "Server online",
+    offline: "Server sleeping",
+    waking: "Waking server…",
+    wakeButton: "Wake server",
+    wakeHint: "Free hosting sleeps when idle. Waking takes 30–60 seconds.",
   },
   export: {
     pending: "Run a master to prepare free downloads.",

@@ -21,6 +21,10 @@ export const els = {
   statusText: document.querySelector("#statusText"),
   statusBanner: document.querySelector("#statusBanner"),
   processingModeBadge: document.querySelector("#processingModeBadge"),
+  serverStatus: document.querySelector("#serverStatus"),
+  serverStatusDot: document.querySelector("#serverStatusDot"),
+  serverStatusText: document.querySelector("#serverStatusText"),
+  wakeServerButton: document.querySelector("#wakeServerButton"),
   uploadPrivacyNote: document.querySelector("#uploadPrivacyNote"),
   uploadLimitsLine: document.querySelector("#uploadLimitsLine"),
   emptyWaveHint: document.querySelector("#emptyWaveHint"),
@@ -115,6 +119,42 @@ export function clearStatusBanner() {
   if (!els.statusBanner) return;
   els.statusBanner.textContent = "";
   els.statusBanner.className = "status-banner";
+}
+
+export function updateServerStatusUI(status, detail = "") {
+  if (!els.serverStatus) return;
+
+  if (status === "hidden") {
+    els.serverStatus.hidden = true;
+    return;
+  }
+
+  els.serverStatus.hidden = false;
+  els.serverStatus.dataset.status = status;
+
+  const labels = {
+    checking: COPY.serverStatus.checking,
+    online: COPY.serverStatus.online,
+    offline: COPY.serverStatus.offline,
+    waking: detail || COPY.serverStatus.waking,
+    unknown: COPY.serverStatus.checking,
+  };
+  els.serverStatusText.textContent = labels[status] || labels.unknown;
+
+  if (els.wakeServerButton) {
+    els.wakeServerButton.hidden = status !== "offline";
+    els.wakeServerButton.disabled = status === "waking" || status === "checking";
+    els.wakeServerButton.textContent = COPY.serverStatus.wakeButton;
+  }
+}
+
+export function setServerStatusVisibility(visible) {
+  if (!els.serverStatus) return;
+  if (!visible) {
+    updateServerStatusUI("hidden");
+    return;
+  }
+  els.serverStatus.hidden = false;
 }
 
 export function updateProcessingModeBadge() {
@@ -524,16 +564,19 @@ export function renderAnalysis(file, buffer, analysis, warnings, readiness) {
   updateWorkflowGuidance(readiness);
 }
 
-export function renderDecodeError(file, message) {
+export function renderDecodeError(file, message, kind = "decode") {
+  const isServer = kind === "server";
   setAppPhase("error");
   setStatusBanner(message, "error");
   setStatus(message);
-  setProgress("analyze", 0, "Audio decoding failed");
+  setProgress("analyze", 0, isServer ? "Server unavailable" : "Audio decoding failed");
   showAnalysisResults();
   els.analysisCard.classList.remove("is-ready");
-  els.readinessBadge.textContent = "Major issues detected";
+  els.readinessBadge.textContent = isServer ? "Server unavailable" : "Major issues detected";
   els.readinessBadge.className = "readiness-badge major";
-  els.readinessCopy.textContent = "Mastering cannot continue until a supported audio file is uploaded.";
+  els.readinessCopy.textContent = isServer
+    ? COPY.serverStatus.wakeHint
+    : "Mastering cannot continue until a supported audio file is uploaded.";
   clearChildren(els.analysisGrid);
   [
     ["File name", file?.name || "Not available"],
@@ -543,16 +586,18 @@ export function renderDecodeError(file, message) {
   clearChildren(els.warningList);
   appendWarning(els.warningList, {
     level: "major",
-    title: "Decode failed",
+    title: isServer ? "Server unavailable" : "Decode failed",
     text: message,
   });
   els.masterButton.disabled = true;
   setMasteringControlsLocked(true);
   state.lastReadiness = {
-    status: "Major issues detected",
+    status: isServer ? "Server unavailable" : "Major issues detected",
     level: "major",
-    copy: "Mastering cannot continue until a supported audio file is uploaded.",
-    nextStep: COPY.workflow.nextByPhase.error,
+    copy: isServer
+      ? COPY.serverStatus.wakeHint
+      : "Mastering cannot continue until a supported audio file is uploaded.",
+    nextStep: isServer ? COPY.errors.serverUnavailable : COPY.workflow.nextByPhase.error,
   };
   updateReadinessNextStep(state.lastReadiness);
   updateWorkflowGuidance(state.lastReadiness);

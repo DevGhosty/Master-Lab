@@ -62,7 +62,7 @@ import {
   disposeMp3Worker,
   loadLocalEncoderScript,
 } from "./export.js";
-import { loadFileViaApi, runMasteringViaApi } from "./api.js";
+import { loadFileViaApi, runMasteringViaApi, startServerStatusMonitor, stopServerStatusMonitor, wakeServer } from "./api.js";
 
 async function loadFile(file) {
   resetSession(false);
@@ -345,6 +345,7 @@ window.addEventListener("resize", () => {
 window.addEventListener("pagehide", () => {
   cleanupUrls();
   disposeMp3Worker();
+  stopServerStatusMonitor();
 });
 
 function initApp() {
@@ -363,6 +364,12 @@ function initApp() {
   setProgress("analyze", 0, "Ready");
   drawEmptyCanvas();
   updateWorkflowGuidance();
+  if (els.wakeServerButton) {
+    els.wakeServerButton.addEventListener("click", () => {
+      wakeServer();
+    });
+  }
+  startServerStatusMonitor();
 }
 
 initApp();

@@ -2,7 +2,14 @@ import { state } from "./state.js";
 import {
   COPY,
   getApiBase,
+  isApiMode,
   API_FETCH_TIMEOUT_MS,
+  API_HEALTH_TIMEOUT_MS,
+  API_HEALTH_WAKE_TIMEOUT_MS,
+  API_HEALTH_POLL_ONLINE_MS,
+  API_HEALTH_POLL_OFFLINE_MS,
+  API_HEALTH_WAKE_ATTEMPTS,
+  API_HEALTH_WAKE_RETRY_MS,
   SUPPORTED_EXTENSIONS,
   MAX_FILE_SIZE_BYTES,
 } from "./constants.js";
@@ -21,6 +28,8 @@ import {
   setExportState,
   updateExportRecommendation,
   readControls,
+  updateServerStatusUI,
+  setServerStatusVisibility,
 } from "./dom.js";
 import {
   updateStats,
@@ -30,9 +39,13 @@ import {
 } from "./waveform.js";
 import { disableExports, enableDownload } from "./export.js";
 
-export async function fetchWithTimeout(url, options = {}) {
+let serverStatus = "unknown";
+let statusPollTimer = null;
+let wakeInProgress = false;
+
+export async function fetchWithTimeout(url, options = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
@@ -45,8 +58,99 @@ export function isFetchTimeoutError(error) {
 }
 
 export function apiFetchErrorMessage(error) {
-  if (isFetchTimeoutError(error)) return COPY.errors.serverWakeup;
+  if (isFetchTimeoutError(error)) return COPY.errors.serverUnavailable;
   return COPY.errors.serverUnreachable;
+}
+
+export function getServerStatus() {
+  return serverStatus;
+}
+
+function setServerStatus(status, detail = "") {
+  serverStatus = status;
+  updateServerStatusUI(status, detail);
+}
+
+function scheduleServerStatusPoll() {
+  if (statusPollTimer) clearTimeout(statusPollTimer);
+  if (!isApiMode() || wakeInProgress) return;
+  const delay = serverStatus === "online" ? API_HEALTH_POLL_ONLINE_MS : API_HEALTH_POLL_OFFLINE_MS;
+  statusPollTimer = setTimeout(() => {
+    refreshServerStatus();
+  }, delay);
+}
+
+export async function checkServerHealth(options = {}) {
+  if (!isApiMode()) return { ok: false, skipped: true };
+  const timeoutMs = options.timeoutMs ?? API_HEALTH_TIMEOUT_MS;
+  try {
+    const response = await fetchWithTimeout(
+      `${getApiBase()}/health`,
+      { method: "GET", cache: "no-store" },
+      timeoutMs,
+    );
+    if (!response.ok) return { ok: false, error: "http" };
+    const payload = await response.json().catch(() => ({}));
+    return { ok: payload.ok === true || response.ok };
+  } catch (error) {
+    return {
+      ok: false,
+      error: isFetchTimeoutError(error) ? "timeout" : "network",
+    };
+  }
+}
+
+export async function refreshServerStatus() {
+  if (!isApiMode() || wakeInProgress) return false;
+  setServerStatus("checking");
+  const result = await checkServerHealth();
+  setServerStatus(result.ok ? "online" : "offline");
+  scheduleServerStatusPoll();
+  return result.ok;
+}
+
+export async function wakeServer() {
+  if (!isApiMode() || wakeInProgress) return false;
+  wakeInProgress = true;
+  if (statusPollTimer) {
+    clearTimeout(statusPollTimer);
+    statusPollTimer = null;
+  }
+
+  for (let attempt = 1; attempt <= API_HEALTH_WAKE_ATTEMPTS; attempt += 1) {
+    setServerStatus("waking", `${COPY.serverStatus.waking} (${attempt}/${API_HEALTH_WAKE_ATTEMPTS})`);
+    const result = await checkServerHealth({ timeoutMs: API_HEALTH_WAKE_TIMEOUT_MS });
+    if (result.ok) {
+      wakeInProgress = false;
+      setServerStatus("online");
+      scheduleServerStatusPoll();
+      return true;
+    }
+    if (attempt < API_HEALTH_WAKE_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, API_HEALTH_WAKE_RETRY_MS));
+    }
+  }
+
+  wakeInProgress = false;
+  setServerStatus("offline");
+  scheduleServerStatusPoll();
+  return false;
+}
+
+export function startServerStatusMonitor() {
+  if (!isApiMode()) {
+    setServerStatusVisibility(false);
+    return;
+  }
+  setServerStatusVisibility(true);
+  refreshServerStatus();
+}
+
+export function stopServerStatusMonitor() {
+  if (statusPollTimer) {
+    clearTimeout(statusPollTimer);
+    statusPollTimer = null;
+  }
 }
 
 export function getProbeBuffer() {
@@ -119,7 +223,8 @@ export async function loadFileViaApi(file) {
     els.emptyWave.classList.add("hidden");
   } catch (error) {
     console.error(error);
-    renderDecodeError(file, apiFetchErrorMessage(error));
+    const serverError = isFetchTimeoutError(error) || !navigator.onLine;
+    renderDecodeError(file, apiFetchErrorMessage(error), serverError ? "server" : "decode");
   }
 }
 
@@ -226,7 +331,7 @@ export async function runMasteringViaApi() {
   } catch (error) {
     console.error(error);
     setAppPhase("error");
-    const message = isFetchTimeoutError(error) ? COPY.errors.serverWakeup : COPY.errors.masterFailed;
+    const message = isFetchTimeoutError(error) ? COPY.errors.serverUnavailable : COPY.errors.masterFailed;
     setStatusBanner(message, "error");
     setStatus(message);
     setProgress("prepare", 0, "Mastering failed");

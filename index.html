@@ -19,7 +19,23 @@
               <h1>Master Lab</h1>
               <p class="trust-line">Free mastering · No account · No tracking</p>
             </div>
-            <span class="mode-pill" id="processingModeBadge" aria-label="Processing mode">Processing</span>
+            <div class="topbar-badges">
+              <span class="mode-pill" id="processingModeBadge" aria-label="Processing mode">Processing</span>
+              <div
+                class="server-status"
+                id="serverStatus"
+                hidden
+                role="status"
+                aria-live="polite"
+                aria-label="Mastering server status"
+              >
+                <span class="server-status-dot" id="serverStatusDot" aria-hidden="true"></span>
+                <span class="server-status-text" id="serverStatusText">Checking server…</span>
+                <button type="button" class="server-wake-button" id="wakeServerButton" hidden>
+                  Wake server
+                </button>
+              </div>
+            </div>
           </div>
           <div class="topbar-status">
             <p id="statusBanner" class="status-banner" role="alert" aria-live="assertive"></p>
