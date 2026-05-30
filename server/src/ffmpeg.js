@@ -114,6 +114,52 @@ function parseClipping(stderr) {
   return { clippingSamples, clippingRatio: clippingSamples / Math.max(1, total) };
 }
 
+const LOSSY_EXTENSIONS = new Set([".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wma"]);
+
+async function runCombinedMetricsPass(inputPath) {
+  const { code, stderr } = await runCommand("ffmpeg", [
+    "-hide_banner",
+    "-i",
+    inputPath,
+    "-af",
+    "loudnorm=print_format=json,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3",
+    "-f",
+    "null",
+    "-",
+  ]);
+  if (code !== 0) throw new Error(stderr || "Audio analysis failed");
+  return {
+    loudnorm: parseLoudnormJson(stderr) || {},
+    stats: parsePeakStats(stderr),
+    clip: parseClipping(stderr),
+    silence: parseSilence(stderr),
+  };
+}
+
+async function ensurePcmAnalyzePath(inputPath) {
+  const ext = path.extname(inputPath).toLowerCase();
+  if (!LOSSY_EXTENSIONS.has(ext)) return { analyzePath: inputPath, cleanup: null };
+  const tempWav = `${inputPath}.analyze.wav`;
+  const { code, stderr } = await runCommand("ffmpeg", [
+    "-hide_banner",
+    "-y",
+    "-i",
+    inputPath,
+    "-ac",
+    "2",
+    "-c:a",
+    "pcm_s16le",
+    tempWav,
+  ]);
+  if (code !== 0) throw new Error(stderr || "Audio decode failed");
+  return {
+    analyzePath: tempWav,
+    cleanup: async () => {
+      await fs.unlink(tempWav).catch(() => {});
+    },
+  };
+}
+
 export async function analyzeAudioFile(inputPath) {
   const probe = await ffprobeJson(inputPath);
   const audioStream = probe.streams?.find((s) => s.codec_type === "audio");
@@ -128,79 +174,50 @@ export async function analyzeAudioFile(inputPath) {
       ? Number(audioStream.bits_per_sample)
       : null;
 
-  const loudnormResult = await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-i",
-    inputPath,
-    "-af",
-    "loudnorm=print_format=json",
-    "-f",
-    "null",
-    "-",
-  ]);
-  const loudnorm = parseLoudnormJson(loudnormResult.stderr) || {};
+  const { analyzePath, cleanup } = await ensurePcmAnalyzePath(inputPath);
+  try {
+    const [{ loudnorm, stats, clip, silence }, waveformPeaks] = await Promise.all([
+      runCombinedMetricsPass(analyzePath),
+      extractWaveformPeaks(analyzePath, 800),
+    ]);
 
-  const statsResult = await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-i",
-    inputPath,
-    "-af",
-    "astats=metadata=1:reset=1,ametadata=print:file=-",
-    "-f",
-    "null",
-    "-",
-  ]);
-  const stats = parsePeakStats(statsResult.stderr);
-  const clip = parseClipping(statsResult.stderr);
+    const metrics = reconcilePeakMetrics(stats, loudnorm);
+    const loudnessDb = metrics.loudnessDb;
+    const truePeakDb = metrics.truePeakDb;
+    const peakDb = metrics.peakDb;
+    const rmsDb = metrics.rmsDb;
+    const crestDb = peakDb - rmsDb;
 
-  const silenceResult = await runCommand("ffmpeg", [
-    "-hide_banner",
-    "-i",
-    inputPath,
-    "-af",
-    "silencedetect=noise=-50dB:d=0.3",
-    "-f",
-    "null",
-    "-",
-  ]);
-  const silence = parseSilence(silenceResult.stderr);
+    const analysis = {
+      rms: metrics.rms,
+      peak: metrics.peak,
+      rmsDb,
+      peakDb,
+      truePeakDb,
+      loudnessDb,
+      crestDb,
+      lowRatioDb: -12,
+      mudRatioDb: -8,
+      midRatioDb: -10,
+      presenceRatioDb: -14,
+      highRatioDb: -18,
+      dcOffset: 0,
+      dcOffsetDb: -80,
+      stereoCorrelation: channels >= 2 ? 0.85 : null,
+      leadingSilenceSeconds: silence.leading,
+      trailingSilenceSeconds: silence.trailing,
+      clippingSamples: clip.clippingSamples,
+      clippingRatio: clip.clippingRatio,
+    };
 
-  const metrics = reconcilePeakMetrics(stats, loudnorm);
-  const loudnessDb = metrics.loudnessDb;
-  const truePeakDb = metrics.truePeakDb;
-  const peakDb = metrics.peakDb;
-  const rmsDb = metrics.rmsDb;
-  const crestDb = peakDb - rmsDb;
-
-  const analysis = {
-    rms: metrics.rms,
-    peak: metrics.peak,
-    rmsDb,
-    peakDb,
-    truePeakDb,
-    loudnessDb,
-    crestDb,
-    lowRatioDb: -12,
-    mudRatioDb: -8,
-    midRatioDb: -10,
-    presenceRatioDb: -14,
-    highRatioDb: -18,
-    dcOffset: 0,
-    dcOffsetDb: -80,
-    stereoCorrelation: channels >= 2 ? 0.85 : null,
-    leadingSilenceSeconds: silence.leading,
-    trailingSilenceSeconds: silence.trailing,
-    clippingSamples: clip.clippingSamples,
-    clippingRatio: clip.clippingRatio,
-  };
-
-  const waveformPeaks = await extractWaveformPeaks(inputPath, 800);
-
-  return {
-    probe: { duration, channels, sampleRate, bitDepth },
-    analysis,
-    waveformPeaks,
-  };
+    return {
+      probe: { duration, channels, sampleRate, bitDepth },
+      analysis,
+      waveformPeaks,
+    };
+  } finally {
+    if (cleanup) await cleanup();
+  }
 }
 
 export async function extractWaveformPeaks(inputPath, width = 800) {

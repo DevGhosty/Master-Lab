@@ -586,7 +586,7 @@ export function renderDecodeError(file, message, kind = "decode") {
   const isServer = kind === "server";
   setAppPhase("error");
   setStatusBanner(message, "error");
-  setStatus(message);
+  setStatus(isServer ? "Server unavailable" : message);
   setProgress("analyze", 0, isServer ? "Server unavailable" : "Audio decoding failed");
   showAnalysisResults();
   els.analysisCard.classList.remove("is-ready");

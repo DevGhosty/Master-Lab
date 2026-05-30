@@ -86,6 +86,7 @@ function validateProbe(probe) {
 
 app.post("/api/analyze", upload.single("file"), async (req, res) => {
   const uploadPath = req.file?.path;
+  const startedAt = Date.now();
   try {
     if (!uploadPath) {
       res.status(400).json({ error: "Missing audio file" });
@@ -93,13 +94,19 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
     }
     const result = await analyzeAudioFile(uploadPath);
     validateProbe(result.probe);
+    console.log(
+      `[analyze] ok ${req.file.originalname} size=${req.file.size} duration=${result.probe.duration}s elapsed=${Date.now() - startedAt}ms`,
+    );
     res.json({
       probe: result.probe,
       analysis: result.analysis,
       waveformPeaks: result.waveformPeaks,
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      `[analyze] fail ${req.file?.originalname || "unknown"} size=${req.file?.size || 0} elapsed=${Date.now() - startedAt}ms`,
+      error,
+    );
     res.status(400).json({ error: error.message || "Analysis failed" });
   } finally {
     await cleanupUpload(uploadPath);
@@ -199,8 +206,6 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
       res.status(400).json({ error: "Missing audio file" });
       return;
     }
-    const analyzed = await analyzeAudioFile(uploadPath);
-    validateProbe(analyzed.probe);
     const job = createJob();
     const inputCopy = path.join(job.dir, `input${path.extname(req.file.originalname) || ".wav"}`);
     await fs.mkdir(job.dir, { recursive: true });
@@ -208,7 +213,6 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
     res.status(202).json({
       jobId: job.id,
       status: job.status,
-      duration: analyzed.probe.duration,
     });
     runMasterJob(job, inputCopy, preset, controls).catch((err) => {
       console.error(err);

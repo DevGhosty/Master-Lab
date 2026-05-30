@@ -5,6 +5,7 @@ import {
   isApiMode,
   API_FETCH_TIMEOUT_MS,
   API_ANALYZE_TIMEOUT_MS,
+  API_MASTER_START_TIMEOUT_MS,
   API_HEALTH_TIMEOUT_MS,
   API_HEALTH_WAKE_TIMEOUT_MS,
   API_HEALTH_POLL_ONLINE_MS,
@@ -255,8 +256,19 @@ export async function loadFileViaApi(file, options = {}) {
   }
 
   setAppPhase("loaded");
-  setStatus("Uploading to server for analysis...");
+  setStatus("Uploading to server for analysis… Large files may take 1–3 minutes.");
   setProgress("analyze", 12, "Uploading audio");
+
+  const analyzeStartedAt = Date.now();
+  // #region agent log
+  debugLog("api.js:loadFileViaApi:start", "analyze upload started", {
+    fileSize: file.size,
+    fileName: file.name,
+    serverStatus,
+    timeoutMs: API_ANALYZE_TIMEOUT_MS,
+    isRetry,
+  }, "A");
+  // #endregion
 
   try {
     const form = new FormData();
@@ -267,6 +279,15 @@ export async function loadFileViaApi(file, options = {}) {
       API_ANALYZE_TIMEOUT_MS,
     );
     const payload = await response.json();
+
+    // #region agent log
+    debugLog("api.js:loadFileViaApi:afterPost", "analyze response received", {
+      ok: response.ok,
+      status: response.status,
+      elapsedMs: Date.now() - analyzeStartedAt,
+    }, response.ok ? "B" : "B");
+    // #endregion
+
     if (!response.ok) {
       if (isTransientServerHttpStatus(response.status) && !isRetry) {
         markServerOffline();
@@ -323,16 +344,30 @@ export async function loadFileViaApi(file, options = {}) {
     return true;
   } catch (error) {
     console.error(error);
+    // #region agent log
+    debugLog("api.js:loadFileViaApi:catch", "analyze failed", {
+      errorName: error?.name,
+      errorMessage: error?.message,
+      isTimeout: isFetchTimeoutError(error),
+      isReachability: isServerReachabilityError(error),
+      elapsedMs: Date.now() - analyzeStartedAt,
+      serverStatus,
+      isRetry,
+    }, isFetchTimeoutError(error) ? "A" : "D");
+    // #endregion
     const serverError = isServerReachabilityError(error);
     if (serverError) markServerOffline();
     if (serverError && !isRetry) {
-      setStatus(COPY.errors.serverWakeup);
-      setProgress("analyze", 8, "Waking server");
-      const woke = await wakeServer();
-      if (woke) {
-        const retried = await loadFileViaApi(file, { isRetry: true });
-        if (retried === true) return;
+      if (serverStatus !== "online") {
+        setStatus(COPY.errors.serverWakeup);
+        setProgress("analyze", 8, "Waking server");
+        await wakeServer();
+      } else {
+        setStatus("Retrying upload…");
+        setProgress("analyze", 10, "Retrying upload");
       }
+      const retried = await loadFileViaApi(file, { isRetry: true });
+      if (retried === true) return;
     }
     renderDecodeError(file, apiFetchErrorMessage(error), serverError ? "server" : "decode");
     return false;
@@ -384,7 +419,7 @@ export async function runMasteringViaApi() {
     const startResponse = await fetchWithTimeout(`${getApiBase()}/api/master/jobs`, {
       method: "POST",
       body: form,
-    });
+    }, API_MASTER_START_TIMEOUT_MS);
     const startPayload = await startResponse.json();
 
     // #region agent log
@@ -496,7 +531,9 @@ export async function runMasteringViaApi() {
     }, isFetchTimeoutError(error) ? "A" : "D");
     // #endregion
     setAppPhase("error");
-    const message = isFetchTimeoutError(error) ? COPY.errors.serverUnavailable : COPY.errors.masterFailed;
+    const message = isFetchTimeoutError(error) || isServerReachabilityError(error)
+      ? COPY.errors.masterServerUnavailable
+      : COPY.errors.masterFailed;
     setStatusBanner(message, "error");
     setStatus(message);
     setProgress("prepare", 0, "Mastering failed");

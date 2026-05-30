@@ -2,9 +2,18 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { JOB_TTL_MS } from "./constants.js";
+import { JOB_TTL_MS, MAX_CHANNELS, MAX_DURATION_SECONDS } from "./constants.js";
 import { buildMasterFilter } from "./presets.js";
-import { extractWaveformPeaks, masterToFiles, removeDir } from "./ffmpeg.js";
+import { analyzeAudioFile, extractWaveformPeaks, masterToFiles, removeDir } from "./ffmpeg.js";
+
+function validateProbe(probe) {
+  if (probe.duration > MAX_DURATION_SECONDS) {
+    throw new Error(`File is longer than ${MAX_DURATION_SECONDS} seconds`);
+  }
+  if (probe.channels > MAX_CHANNELS) {
+    throw new Error("Only mono or stereo files are supported");
+  }
+}
 
 /** @type {Map<string, object>} */
 const jobs = new Map();
@@ -33,11 +42,15 @@ export function getJob(id) {
 
 export async function runMasterJob(job, inputPath, preset, controls) {
   job.status = "processing";
-  job.progress = 10;
-  job.message = "Applying mastering preset";
+  job.progress = 5;
+  job.message = "Analyzing original file";
   await fs.mkdir(job.dir, { recursive: true });
 
   try {
+    const analyzed = await analyzeAudioFile(inputPath);
+    validateProbe(analyzed.probe);
+    job.progress = 10;
+    job.message = "Applying mastering preset";
     const filter = buildMasterFilter(preset, controls);
     job.progress = 40;
     job.message = "Rendering master";

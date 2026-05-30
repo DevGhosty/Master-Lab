@@ -9,7 +9,8 @@ export const TRUE_PEAK_OVERSAMPLE = 4;
 export const LUFS_ABSOLUTE_GATE = -70;
 export const LUFS_RELATIVE_GATE_OFFSET = -10;
 export const API_FETCH_TIMEOUT_MS = 45000;
-export const API_ANALYZE_TIMEOUT_MS = 120000;
+export const API_ANALYZE_TIMEOUT_MS = 300000;
+export const API_MASTER_START_TIMEOUT_MS = 300000;
 export const API_HEALTH_TIMEOUT_MS = 8000;
 export const API_HEALTH_WAKE_TIMEOUT_MS = 15000;
 export const API_HEALTH_POLL_ONLINE_MS = 60000;
@@ -46,7 +47,8 @@ export const COPY = {
   errors: {
     serverUnreachable: "Could not reach the mastering server. Try again in a moment.",
     serverWakeup: "Server may be waking up—tap Wake server above the upload area, then try again.",
-    serverUnavailable: "Could not reach the mastering server while analyzing your file. The server may still be waking up.",
+    serverUnavailable: "Could not reach the mastering server while analyzing your file. Large files can take several minutes on free hosting—try again or use Wake server above.",
+    masterServerUnavailable: "Could not reach the mastering server while rendering your master. Large files can take several minutes on free hosting—try again.",
     serverRetryStep: "Tap Wake server above, wait for the green dot, then upload again.",
     masterFailed: "Mastering failed. Your original file was not changed.",
   },
