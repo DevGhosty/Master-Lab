@@ -65,15 +65,45 @@ function parseSilence(stderr) {
 }
 
 function parsePeakStats(stderr) {
-  let peak = 0;
-  let rms = 0;
-  const peakMatch = stderr.match(/Peak level dB:\s*([-\d.]+)/);
-  const rmsMatch = stderr.match(/RMS level dB:\s*([-\d.]+)/);
-  if (peakMatch) peak = Number(peakMatch[1]);
-  if (rmsMatch) rms = Number(rmsMatch[1]);
-  const peakLinear = peak > -120 ? Math.pow(10, peak / 20) : 0;
-  const rmsLinear = rms > -120 ? Math.pow(10, rms / 20) : 0;
-  return { peakDb: peak, rmsDb: rms, peak: peakLinear, rms: rmsLinear };
+  let peakDb = -Infinity;
+  let rmsDb = -Infinity;
+
+  const overallBlock = stderr.match(/Overall[\s\S]*?(?=\n\[|\n*$)/);
+  const haystack = overallBlock ? overallBlock[0] : stderr;
+
+  const peakMatch = haystack.match(/Peak level dB:\s*([-\d.]+)/i);
+  const rmsMatch = haystack.match(/RMS level dB:\s*([-\d.]+)/i);
+  if (peakMatch) peakDb = Number(peakMatch[1]);
+  if (rmsMatch) rmsDb = Number(rmsMatch[1]);
+
+  const peakLinear = Number.isFinite(peakDb) && peakDb > -120 ? Math.pow(10, peakDb / 20) : 0;
+  const rmsLinear = Number.isFinite(rmsDb) && rmsDb > -120 ? Math.pow(10, rmsDb / 20) : 0;
+  return { peakDb, rmsDb, peak: peakLinear, rms: rmsLinear };
+}
+
+function reconcilePeakMetrics(stats, loudnorm) {
+  const loudnessDb = loudnorm.input_i != null ? Number(loudnorm.input_i) : stats.rmsDb;
+  const truePeakDb = loudnorm.input_tp != null ? Number(loudnorm.input_tp) : stats.peakDb;
+  let peakDb = stats.peakDb;
+  let rmsDb = stats.rmsDb;
+  let peak = stats.peak;
+  let rms = stats.rms;
+
+  const statsLookBroken =
+    !Number.isFinite(peakDb) ||
+    peakDb < -60 ||
+    (Number.isFinite(loudnessDb) && loudnessDb > -30 && peakDb < -20);
+
+  if (statsLookBroken && Number.isFinite(truePeakDb)) {
+    peakDb = truePeakDb;
+    peak = Math.pow(10, peakDb / 20);
+  }
+  if ((!Number.isFinite(rmsDb) || rmsDb < -60) && Number.isFinite(loudnessDb)) {
+    rmsDb = loudnessDb - 6;
+    rms = Math.pow(10, rmsDb / 20);
+  }
+
+  return { peakDb, rmsDb, peak, rms, loudnessDb, truePeakDb };
 }
 
 function parseClipping(stderr) {
@@ -135,15 +165,16 @@ export async function analyzeAudioFile(inputPath) {
   ]);
   const silence = parseSilence(silenceResult.stderr);
 
-  const loudnessDb = loudnorm.input_i != null ? Number(loudnorm.input_i) : stats.rmsDb;
-  const truePeakDb = loudnorm.input_tp != null ? Number(loudnorm.input_tp) : stats.peakDb;
-  const peakDb = stats.peakDb;
-  const rmsDb = stats.rmsDb;
+  const metrics = reconcilePeakMetrics(stats, loudnorm);
+  const loudnessDb = metrics.loudnessDb;
+  const truePeakDb = metrics.truePeakDb;
+  const peakDb = metrics.peakDb;
+  const rmsDb = metrics.rmsDb;
   const crestDb = peakDb - rmsDb;
 
   const analysis = {
-    rms: stats.rms,
-    peak: stats.peak,
+    rms: metrics.rms,
+    peak: metrics.peak,
     rmsDb,
     peakDb,
     truePeakDb,

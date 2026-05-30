@@ -1,4 +1,5 @@
 import { state } from "./state.js";
+import { hasAudibleSignal } from "./analysis.js";
 import { COPY, isApiMode } from "./constants.js";
 import { PRESETS, formatPresetGuidance } from "./presets.js";
 import { getAdaptiveTarget, getAdaptiveCeiling } from "./mastering.js";
@@ -124,9 +125,13 @@ export function updateProcessingModeBadge() {
   els.processingModeBadge.classList.toggle("is-local", !server);
 }
 
-export function updateDropzoneState(hasFile) {
+export function updateDropzoneState(hasFile, fileName = "") {
   els.dropzone.classList.toggle("is-empty", !hasFile);
   els.dropzone.classList.toggle("has-file", Boolean(hasFile));
+  const label = els.dropzone.querySelector(".dropzone-content strong");
+  if (label) {
+    label.textContent = hasFile && fileName ? fileName : "Drop your mix here";
+  }
 }
 
 export function setExportState(stateClass) {
@@ -380,6 +385,13 @@ export function updateReadinessNextStep(readiness) {
 export function updateWorkflowGuidance(readiness = null) {
   const phase = els.appShell?.dataset.phase || "empty";
   updateWorkflowStepHighlight();
+  if (!els.analysisCard.classList.contains("hidden")) {
+    setAnalysisPlaceholderVisible(false);
+  } else if (phase === "loaded") {
+    setAnalysisPlaceholderVisible(true, "loaded");
+  } else if (phase === "empty" || phase === "error") {
+    setAnalysisPlaceholderVisible(true, "empty");
+  }
   if (els.emptyWaveNext && !els.emptyWave.classList.contains("hidden")) {
     els.emptyWaveNext.textContent = isApiMode()
       ? COPY.workflow.emptyWaveNextServer
@@ -393,13 +405,6 @@ export function updateWorkflowGuidance(readiness = null) {
   updateExportRecommendation();
   updateExportFormatVisibility();
   updateWorkflowYouAreHere();
-  if (phase === "loaded") {
-    setAnalysisPlaceholderVisible(true, "loaded");
-  } else if (phase === "empty" || phase === "error") {
-    if (els.analysisCard.classList.contains("hidden")) {
-      setAnalysisPlaceholderVisible(true, "empty");
-    }
-  }
 }
 
 export function setProgress(step, percent, label) {
@@ -497,7 +502,7 @@ export function renderAnalysis(file, buffer, analysis, warnings, readiness) {
 
   showAnalysisResults();
   els.analysisCard.classList.toggle("is-ready", readiness.level === "good");
-  setMasteringControlsLocked(analysis.peak < 0.00001);
+  setMasteringControlsLocked(!hasAudibleSignal(analysis));
   els.readinessBadge.textContent = readiness.status;
   els.readinessBadge.className = `readiness-badge ${readiness.level}`;
   els.readinessCopy.textContent = readiness.copy;

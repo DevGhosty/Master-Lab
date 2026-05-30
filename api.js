@@ -8,7 +8,7 @@ import {
 } from "./constants.js";
 import { formatBytes, formatTime, nextFrame } from "./utils.js";
 import { PRESETS } from "./presets.js";
-import { buildWarnings, getReadiness } from "./analysis.js";
+import { buildWarnings, getReadiness, normalizeAnalysisMetrics, hasAudibleSignal } from "./analysis.js";
 import {
   els,
   renderDecodeError,
@@ -86,7 +86,7 @@ export async function loadFileViaApi(file) {
     }
 
     state.apiProbe = payload.probe;
-    state.analysis = payload.analysis;
+    state.analysis = normalizeAnalysisMetrics(payload.analysis);
     state.originalWaveformPeaks = payload.waveformPeaks || null;
     state.bitDepth = payload.probe.bitDepth;
     state.originalUrl = URL.createObjectURL(file);
@@ -112,7 +112,7 @@ export async function loadFileViaApi(file) {
       readiness.level === "good" ? COPY.status.readyToMaster : COPY.status.analysisDoneServer
     );
 
-    els.masterButton.disabled = state.analysis.peak < 0.00001;
+    els.masterButton.disabled = !hasAudibleSignal(state.analysis);
     els.playButton.disabled = false;
     els.seekSlider.disabled = false;
     els.resetButton.disabled = false;

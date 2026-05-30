@@ -16,7 +16,7 @@ import {
 } from "./utils.js";
 import { PRESETS } from "./presets.js";
 import { state, getAudioContext, cleanupUrls } from "./state.js";
-import { analyzeAudioBuffer, buildWarnings, getReadiness, parseBitDepth } from "./analysis.js";
+import { analyzeAudioBuffer, buildWarnings, getReadiness, parseBitDepth, hasAudibleSignal } from "./analysis.js";
 import { masterBuffer } from "./mastering.js";
 import {
   els,
@@ -67,7 +67,7 @@ import { loadFileViaApi, runMasteringViaApi } from "./api.js";
 async function loadFile(file) {
   resetSession(false);
   clearStatusBanner();
-  updateDropzoneState(true);
+  updateDropzoneState(true, file.name);
   state.file = file;
   state.fileName = sanitizeBaseName(file.name);
   state.fileExtension = getExtension(file.name);
@@ -133,7 +133,7 @@ async function loadFile(file) {
       readiness.level === "good" ? COPY.status.readyToMaster : COPY.status.analysisDone
     );
 
-    els.masterButton.disabled = analysis.peak < 0.00001;
+    els.masterButton.disabled = !hasAudibleSignal(analysis);
     els.playButton.disabled = false;
     els.seekSlider.disabled = false;
     els.resetButton.disabled = false;

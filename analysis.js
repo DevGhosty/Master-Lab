@@ -5,7 +5,42 @@ import {
   LUFS_ABSOLUTE_GATE,
   LUFS_RELATIVE_GATE_OFFSET,
 } from "./constants.js";
-import { clamp, linearToDb, mixDown, isLossyFile } from "./utils.js";
+import { clamp, linearToDb, dbToLinear, mixDown, isLossyFile } from "./utils.js";
+
+/** Sample peak alone can be wrong (e.g. server astats misparsing); use loudness/TP too. */
+export function hasAudibleSignal(analysis) {
+  if (!analysis) return false;
+  if (analysis.peak >= 0.00001) return true;
+  if (Number.isFinite(analysis.loudnessDb) && analysis.loudnessDb > -50) return true;
+  if (Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb > -40) return true;
+  if (Number.isFinite(analysis.rmsDb) && analysis.rmsDb > -60) return true;
+  return false;
+}
+
+/** Repair inconsistent server metrics (e.g. astats peak vs loudnorm true peak). */
+export function normalizeAnalysisMetrics(analysis) {
+  if (!analysis) return analysis;
+  const loud = Number.isFinite(analysis.loudnessDb) && analysis.loudnessDb > -50;
+  const hot = Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb > -40;
+  const peakBroken =
+    hot &&
+    (!Number.isFinite(analysis.peakDb) ||
+      analysis.peakDb < -60 ||
+      analysis.peakDb < analysis.truePeakDb - 6);
+
+  if (peakBroken) {
+    analysis.peakDb = analysis.truePeakDb;
+    analysis.peak = dbToLinear(analysis.peakDb);
+  }
+  if ((!Number.isFinite(analysis.rmsDb) || analysis.rmsDb < -60) && loud) {
+    analysis.rmsDb = analysis.loudnessDb - 6;
+    analysis.rms = dbToLinear(analysis.rmsDb);
+  }
+  if (Number.isFinite(analysis.peakDb) && Number.isFinite(analysis.rmsDb)) {
+    analysis.crestDb = analysis.peakDb - analysis.rmsDb;
+  }
+  return analysis;
+}
 
 export function analyzeAudioBuffer(buffer) {
   const mono = mixDown(buffer);
@@ -366,7 +401,7 @@ export function buildWarnings(file, buffer, analysis) {
   if (isLossyFile(file)) {
     warnings.push(warningFromCopy("lossy", "minor"));
   }
-  if (analysis.peak < 0.00001 || !Number.isFinite(analysis.rmsDb)) {
+  if (!hasAudibleSignal(analysis)) {
     warnings.push(warningFromCopy("silent", "major"));
   }
   if (analysis.loudnessDb < -32) {
@@ -402,8 +437,8 @@ export function buildWarnings(file, buffer, analysis) {
 
 export function getReadiness(warnings, analysis) {
   const majorWarnings = warnings.filter((w) => w.level === "major");
-  if (majorWarnings.length > 0 || analysis.peak < 0.00001) {
-    if (analysis.peak < 0.00001) {
+  if (majorWarnings.length > 0 || !hasAudibleSignal(analysis)) {
+    if (!hasAudibleSignal(analysis)) {
       return {
         status: "Major issues detected",
         level: "major",
