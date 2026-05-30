@@ -403,8 +403,7 @@ export async function masterToFiles(inputPath, workDir, filterChain, onProgress)
 
   const filterComplex = [
     `[0:a]${filterChain}[master]`,
-    "[master]asplit=6[pv][w32][w24][w16][mp3s][wf]",
-    "[pv]atrim=end=30,asetpts=PTS-STARTPTS[pout]",
+    "[master]asplit=6[preview][w32][w24][w16][mp3s][wf]",
     "[wf]aresample=8000,aformat=channel_layouts=mono:sample_fmts=flt[wout]",
   ].join(";");
 
@@ -417,7 +416,7 @@ export async function masterToFiles(inputPath, workDir, filterChain, onProgress)
     "-filter_complex",
     filterComplex,
     "-map",
-    "[pout]",
+    "[preview]",
     "-c:a",
     "pcm_s16le",
     previewPath,
