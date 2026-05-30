@@ -37,17 +37,40 @@ export async function ffprobeJson(inputPath) {
 }
 
 function parseEbur128Summary(stderr) {
-  const summary = stderr.match(/Summary:[\s\S]*?(?=\n\[|\n*$)/i)?.[0] || stderr;
-  const integratedMatch =
-    summary.match(/Integrated loudness\s*\(I\):\s*([-\d.]+)\s*LUFS/i) ||
-    stderr.match(/\bI:\s*([-\d.]+)\s*LUFS/i);
-  const truePeakMatch =
-    summary.match(/True peak:\s*([-\d.]+)\s*dBTP/i) ||
-    stderr.match(/\bPeak:\s*([-\d.]+)\s*dBTP/i);
-  return {
-    input_i: integratedMatch ? Number(integratedMatch[1]) : null,
-    input_tp: truePeakMatch ? Number(truePeakMatch[1]) : null,
-  };
+  const summaryBlock = stderr.match(/Summary:[\s\S]*?(?=\n\[|$)/i)?.[0];
+  if (summaryBlock) {
+    const integratedMatch = summaryBlock.match(/Integrated loudness\s*\(I\):\s*([-\d.]+)\s*LUFS/i);
+    const truePeakMatch = summaryBlock.match(/True peak:\s*([-\d.]+)\s*dBTP/i);
+    if (integratedMatch) {
+      return {
+        input_i: Number(integratedMatch[1]),
+        input_tp: truePeakMatch ? Number(truePeakMatch[1]) : null,
+      };
+    }
+  }
+
+  const integratedMatches = [...stderr.matchAll(/Integrated loudness\s*\(I\):\s*([-\d.]+)\s*LUFS/gi)];
+  if (integratedMatches.length) {
+    const last = integratedMatches[integratedMatches.length - 1];
+    const tpMatches = [...stderr.matchAll(/True peak:\s*([-\d.]+)\s*dBTP/gi)];
+    return {
+      input_i: Number(last[1]),
+      input_tp: tpMatches.length ? Number(tpMatches[tpMatches.length - 1][1]) : null,
+    };
+  }
+
+  // Progressive ebur128 lines — use the final integrated value, not the first (-70 gate).
+  const progressMatches = [...stderr.matchAll(/\bI:\s*([-\d.]+)\s*LUFS/gi)];
+  if (progressMatches.length) {
+    const last = progressMatches[progressMatches.length - 1];
+    const tpMatches = [...stderr.matchAll(/\bPeak:\s*([-\d.]+)\s*dBTP/gi)];
+    return {
+      input_i: Number(last[1]),
+      input_tp: tpMatches.length ? Number(tpMatches[tpMatches.length - 1][1]) : null,
+    };
+  }
+
+  return { input_i: null, input_tp: null };
 }
 
 function parseSilence(stderr) {
@@ -132,14 +155,16 @@ function probeFromFfprobe(probe) {
 
 function buildAnalysisFromMetrics(metrics, clip, silence, channels) {
   const { peakDb, rmsDb, peak, rms, loudnessDb, truePeakDb } = metrics;
+  const safePeakDb = Number.isFinite(peakDb) ? peakDb : null;
+  const safeRmsDb = Number.isFinite(rmsDb) ? rmsDb : null;
   return {
     rms,
     peak,
-    rmsDb,
-    peakDb,
-    truePeakDb,
-    loudnessDb,
-    crestDb: peakDb - rmsDb,
+    rmsDb: safeRmsDb,
+    peakDb: safePeakDb,
+    truePeakDb: Number.isFinite(truePeakDb) ? truePeakDb : null,
+    loudnessDb: Number.isFinite(loudnessDb) ? loudnessDb : null,
+    crestDb: safePeakDb != null && safeRmsDb != null ? safePeakDb - safeRmsDb : null,
     lowRatioDb: -12,
     mudRatioDb: -8,
     midRatioDb: -10,
@@ -153,6 +178,50 @@ function buildAnalysisFromMetrics(metrics, clip, silence, channels) {
     clippingSamples: clip.clippingSamples,
     clippingRatio: clip.clippingRatio,
   };
+}
+
+function inferPeakFromWaveformPeaks(waveformPeaks) {
+  if (!waveformPeaks?.length) return null;
+  let maxAbs = 0;
+  for (const point of waveformPeaks) {
+    maxAbs = Math.max(maxAbs, Math.abs(point.min), Math.abs(point.max));
+  }
+  if (maxAbs <= 0.00001) return null;
+  const peakDb = 20 * Math.log10(maxAbs);
+  return { peak: maxAbs, peakDb, truePeakDb: peakDb };
+}
+
+function applyWaveformFallback(analysis, waveformPeaks) {
+  const inferred = inferPeakFromWaveformPeaks(waveformPeaks);
+  if (!inferred) return analysis;
+
+  const peakBroken =
+    !Number.isFinite(analysis.peakDb) ||
+    analysis.peakDb < -60 ||
+    !Number.isFinite(analysis.peak) ||
+    analysis.peak < 0.00001;
+  const loudnessBroken =
+    !Number.isFinite(analysis.loudnessDb) ||
+    analysis.loudnessDb <= -69;
+
+  if (peakBroken) {
+    analysis.peak = inferred.peak;
+    analysis.peakDb = inferred.peakDb;
+    if (!Number.isFinite(analysis.truePeakDb) || analysis.truePeakDb < -60) {
+      analysis.truePeakDb = inferred.truePeakDb;
+    }
+  }
+  if ((!Number.isFinite(analysis.rmsDb) || analysis.rmsDb < -60) && Number.isFinite(analysis.peakDb)) {
+    analysis.rmsDb = analysis.peakDb - 12;
+    analysis.rms = Math.pow(10, analysis.rmsDb / 20);
+  }
+  if (loudnessBroken && Number.isFinite(analysis.peakDb) && analysis.peakDb > -60) {
+    analysis.loudnessDb = Math.max(analysis.peakDb - 16, -35);
+  }
+  if (Number.isFinite(analysis.peakDb) && Number.isFinite(analysis.rmsDb)) {
+    analysis.crestDb = analysis.peakDb - analysis.rmsDb;
+  }
+  return analysis;
 }
 
 function peaksFromFloat32File(buffer, width = 800) {
@@ -185,14 +254,34 @@ async function readPeaksFile(peaksRaw, width = 800) {
   return peaksFromFloat32File(buffer, width);
 }
 
-/** Fast EBU R128 measurement pass (much faster than loudnorm for analysis). */
+const METRICS_FILTER_COMPLEX = [
+  "[0:a]asplit=2[stats][loud]",
+  "[stats]aformat=sample_rates=48000:channel_layouts=stereo,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3[sout]",
+  "[loud]aformat=sample_rates=48000:channel_layouts=stereo,ebur128=peak=true[lout]",
+].join(";");
+
+const ANALYZE_FILTER_COMPLEX = [
+  "[0:a]asplit=3[stats][loud][wave]",
+  "[stats]aformat=sample_rates=48000:channel_layouts=stereo,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3[sout]",
+  "[loud]aformat=sample_rates=48000:channel_layouts=stereo,ebur128=peak=true[lout]",
+  "[wave]aresample=8000,aformat=channel_layouts=mono:sample_fmts=flt[wout]",
+].join(";");
+
+/** Fast EBU R128 + astats in separate branches (same decode). */
 async function runMetricsPass(inputPath) {
   const { code, stderr } = await runCommand("ffmpeg", [
     ...FFMPEG_GLOBAL,
     "-i",
     inputPath,
-    "-af",
-    "ebur128=peak=true,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3",
+    "-filter_complex",
+    METRICS_FILTER_COMPLEX,
+    "-map",
+    "[sout]",
+    "-f",
+    "null",
+    "-",
+    "-map",
+    "[lout]",
     "-f",
     "null",
     "-",
@@ -206,23 +295,22 @@ async function runMetricsPass(inputPath) {
   };
 }
 
-/** One decode: metrics branch + waveform branch in parallel inside FFmpeg. */
+/** One decode: stats + loudness + waveform branches in parallel inside FFmpeg. */
 async function runCombinedAnalyzePass(inputPath, peaksRaw) {
-  const filterComplex = [
-    "[0:a]asplit=2[meta][wave]",
-    "[meta]aformat=sample_rates=48000:channel_layouts=stereo,ebur128=peak=true,astats=metadata=1:reset=1,ametadata=print:file=-,silencedetect=noise=-50dB:d=0.3[aout]",
-    "[wave]aresample=8000,aformat=channel_layouts=mono:sample_fmts=flt[wout]",
-  ].join(";");
-
   const { code, stderr } = await runCommand("ffmpeg", [
     ...FFMPEG_GLOBAL,
     "-y",
     "-i",
     inputPath,
     "-filter_complex",
-    filterComplex,
+    ANALYZE_FILTER_COMPLEX,
     "-map",
-    "[aout]",
+    "[sout]",
+    "-f",
+    "null",
+    "-",
+    "-map",
+    "[lout]",
     "-f",
     "null",
     "-",
@@ -273,9 +361,11 @@ export async function analyzeAudioFile(inputPath) {
   const { loudness, stats, clip, silence } = await runCombinedAnalyzePass(inputPath, peaksRaw);
   const metrics = reconcilePeakMetrics(stats, loudness);
   const waveformPeaks = await readPeaksFile(peaksRaw);
+  const analysis = buildAnalysisFromMetrics(metrics, clip, silence, probe.channels);
+  applyWaveformFallback(analysis, waveformPeaks);
   return {
     probe,
-    analysis: buildAnalysisFromMetrics(metrics, clip, silence, probe.channels),
+    analysis,
     waveformPeaks,
   };
 }
