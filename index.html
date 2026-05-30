@@ -11,16 +11,38 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="app-shell">
+    <main class="app-shell" id="appShell" data-phase="empty">
       <header class="topbar">
-        <div>
-          <h1>Master Lab</h1>
-          <p id="statusText" aria-live="polite">Upload audio to run an original audio check.</p>
+        <div class="topbar-main">
+          <div class="brand-row">
+            <div class="brand-block">
+              <h1>Master Lab</h1>
+              <p class="trust-line">Free mastering · No account · No tracking</p>
+            </div>
+            <span class="mode-pill" id="processingModeBadge" aria-label="Processing mode">Processing</span>
+          </div>
+          <div class="topbar-status">
+            <p id="statusBanner" class="status-banner" role="alert" aria-live="assertive"></p>
+            <p id="statusText" aria-live="polite">Upload audio to run an original audio check.</p>
+          </div>
         </div>
-        <button class="icon-button" id="resetButton" type="button" title="Reset session" disabled>
-          <span aria-hidden="true">↺</span>
+        <button
+          class="reset-button"
+          id="resetButton"
+          type="button"
+          aria-label="Reset session"
+          title="Reset session"
+          disabled
+        >
+          <span class="reset-icon" aria-hidden="true">↺</span>
+          <span class="reset-label">Reset</span>
         </button>
       </header>
+
+      <p class="workflow-ribbon" id="workflowYouAreHere" aria-live="polite">
+        <span class="workflow-ribbon-label">You are here</span>
+        <span id="workflowYouAreHereText">Step 1 — Upload your mix</span>
+      </p>
 
       <section class="workspace" aria-label="Mastering workspace">
         <aside class="panel input-panel" aria-label="Upload, original check, and presets">
@@ -29,29 +51,61 @@
               <span class="step-number">1</span>
               <div>
                 <h2>Upload audio</h2>
-                <p id="uploadPrivacyNote">No audio is uploaded or stored when using in-browser mode.</p>
+                <p id="uploadPrivacyNote">Processing mode loads when the app starts.</p>
               </div>
             </div>
-            <label class="dropzone" id="dropzone">
-              <input id="fileInput" type="file" accept="audio/*" />
-              <span class="drop-icon" aria-hidden="true">⇧</span>
-              <strong>Drop audio here</strong>
-              <small>WAV, AIFF, FLAC, MP3, M4A, AAC, or OGG if your browser can decode it</small>
+            <label class="dropzone is-empty" id="dropzone">
+              <input id="fileInput" type="file" accept="audio/*" aria-describedby="uploadPrivacyNote" />
+              <div class="dropzone-content">
+                <span class="drop-icon" aria-hidden="true">♪</span>
+                <strong>Drop your mix here</strong>
+                <span class="drop-hint">WAV, AIFF, FLAC, MP3, M4A, AAC, or OGG</span>
+                <span class="drop-limits" id="uploadLimitsLine">Mono or stereo · 150 MB max · 15 min max</span>
+              </div>
             </label>
+            <ol class="workflow-steps" id="workflowSteps" aria-label="Mastering steps">
+              <li data-workflow-step="upload"><span>1</span> Upload</li>
+              <li data-workflow-step="check"><span>2</span> Check</li>
+              <li data-workflow-step="goal"><span>3</span> Goal</li>
+              <li data-workflow-step="export"><span>4</span> Export</li>
+            </ol>
+          </section>
+
+          <div class="panel-divider" aria-hidden="true"></div>
+
+          <section class="flow-section analysis-placeholder" id="analysisPlaceholder" aria-label="Original audio check preview">
+            <div class="section-heading">
+              <span class="step-number">2</span>
+              <div>
+                <h2>Original audio check</h2>
+                <p id="analysisPlaceholderCopy">
+                  Runs automatically after upload—we check loudness, peaks, and common issues before you master.
+                </p>
+              </div>
+            </div>
           </section>
 
           <section class="flow-section analysis-card hidden" id="analysisCard" aria-label="Original audio check">
             <div class="section-heading">
               <span class="step-number">2</span>
               <div>
-                <h2>Original Audio Check</h2>
+                <h2>Original audio check</h2>
                 <p id="readinessCopy">Analysis appears after upload.</p>
               </div>
             </div>
-            <div class="readiness-badge" id="readinessBadge">Waiting for file</div>
+            <div class="readiness-badge" id="readinessBadge" role="status">Waiting for file</div>
+            <p class="helper-text readiness-next" id="readinessNextStep" hidden></p>
+            <p class="helper-text" id="analysisGuidance">Technical details from your file appear below.</p>
             <dl class="analysis-grid" id="analysisGrid"></dl>
             <div class="warning-list" id="warningList" aria-live="polite"></div>
           </section>
+
+          <div class="panel-divider" aria-hidden="true"></div>
+
+          <div class="mastering-controls is-locked" id="masteringControls">
+            <p class="helper-text control-hint" id="presetSectionHint">
+              Available after the original audio check finishes.
+            </p>
 
           <section class="flow-section preset-section" aria-label="Mastering preset selection">
             <div class="section-heading">
@@ -62,55 +116,58 @@
               </div>
             </div>
             <div class="preset-grid" id="presetGrid" role="listbox" aria-label="Mastering presets">
-              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="balanced">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="balanced" disabled>
                 <strong>Balanced</strong>
                 <span>A clean, natural master with moderate loudness.</span>
               </button>
-              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="loud">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="loud" disabled>
                 <strong>Loud</strong>
                 <span>A louder master with more limiting.</span>
               </button>
-              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="warm">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="warm" disabled>
                 <strong>Warm</strong>
                 <span>A smoother sound with less harshness.</span>
               </button>
-              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="bright">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="bright" disabled>
                 <strong>Bright</strong>
                 <span>Adds clarity and presence.</span>
               </button>
-              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="bass">
+              <button class="preset-button" type="button" role="option" aria-selected="false" data-preset="bass" disabled>
                 <strong>Bass Boost</strong>
                 <span>Adds more low-end weight.</span>
               </button>
-              <button class="preset-button active" type="button" role="option" aria-selected="true" data-preset="streaming">
+              <button class="preset-button active" type="button" role="option" aria-selected="true" data-preset="streaming" disabled>
                 <strong>Streaming Ready</strong>
                 <span>Targets a clean streaming-friendly loudness.</span>
               </button>
             </div>
           </section>
 
-          <section class="flow-section">
+          <section class="flow-section panel-subsection" aria-label="Fine tune controls">
             <div class="group-title">
               <span>Fine tune</span>
               <output id="intensityOutput">42%</output>
             </div>
             <label class="range-row">
               <span>Intensity</span>
-              <input id="intensitySlider" type="range" min="0" max="100" value="42" />
+              <input id="intensitySlider" type="range" min="0" max="100" value="42" disabled />
             </label>
             <label class="range-row">
               <span>Warmth</span>
-              <input id="warmthSlider" type="range" min="0" max="100" value="50" />
+              <input id="warmthSlider" type="range" min="0" max="100" value="50" disabled />
             </label>
             <label class="range-row">
               <span>Air</span>
-              <input id="airSlider" type="range" min="0" max="100" value="50" />
+              <input id="airSlider" type="range" min="0" max="100" value="50" disabled />
             </label>
             <label class="toggle-row">
-              <input id="trimSilenceToggle" type="checkbox" checked />
+              <input id="trimSilenceToggle" type="checkbox" checked disabled />
               <span>Trim leading silence</span>
             </label>
           </section>
+          </div>
+
+          <div class="panel-divider" aria-hidden="true"></div>
 
           <section class="flow-section progress-section" aria-label="Mastering progress">
             <div class="progress-header">
@@ -130,33 +187,77 @@
             <button class="primary-button" id="masterButton" type="button" disabled>
               Master file
             </button>
+            <p class="helper-text control-hint" id="masterButtonHint">Upload a track to enable mastering.</p>
           </section>
         </aside>
 
         <section class="center-stage" aria-label="Before and after preview">
           <div class="wave-header">
             <div>
+              <p class="console-label">Preview</p>
               <h2 id="trackTitle">No track loaded</h2>
               <p id="trackDetails">Original and mastered waveforms will appear here.</p>
             </div>
             <div class="preview-actions">
               <div class="segmented" role="tablist" aria-label="Preview source">
-                <button id="originalTab" type="button" class="active" aria-selected="true">Original</button>
-                <button id="masteredTab" type="button" aria-selected="false" disabled>Mastered</button>
-                <button id="compareTab" type="button" aria-selected="false" disabled>Compare</button>
+                <button
+                  id="originalTab"
+                  type="button"
+                  class="active"
+                  aria-selected="true"
+                  aria-describedby="previewModeHelp"
+                >
+                  Original
+                </button>
+                <button
+                  id="masteredTab"
+                  type="button"
+                  aria-selected="false"
+                  disabled
+                  aria-describedby="previewModeHelp"
+                >
+                  Mastered
+                </button>
+                <button
+                  id="compareTab"
+                  type="button"
+                  aria-selected="false"
+                  disabled
+                  aria-describedby="previewModeHelp"
+                >
+                  Compare
+                </button>
               </div>
+              <p class="helper-text preview-help" id="previewModeHelp"></p>
               <label class="compare-toggle">
                 <input id="volumeMatchToggle" type="checkbox" disabled />
                 <span>Volume matched preview</span>
               </label>
+              <p class="helper-text control-hint" id="volumeMatchHint"></p>
             </div>
           </div>
 
-          <div class="waveform-wrap" id="waveformWrap" role="slider" tabindex="0" aria-label="Seek waveform" aria-valuemin="0" aria-valuemax="1000" aria-valuenow="0">
+          <div
+            class="waveform-wrap"
+            id="waveformWrap"
+            role="slider"
+            tabindex="0"
+            aria-label="Seek waveform"
+            aria-keyshortcuts="ArrowLeft ArrowRight"
+            aria-valuemin="0"
+            aria-valuemax="1000"
+            aria-valuenow="0"
+          >
             <canvas id="waveCanvas" width="960" height="340" aria-label="Audio waveform comparison"></canvas>
             <div class="playhead" id="playhead" aria-hidden="true"></div>
             <div class="empty-wave" id="emptyWave">
-              <span>Waiting for audio</span>
+              <div class="empty-state">
+                <div class="empty-state-icon" aria-hidden="true">♪</div>
+                <h3>No audio loaded</h3>
+                <p id="emptyWaveHint">Upload a track to see the waveform and run an original audio check.</p>
+                <p class="helper-text empty-wave-next" id="emptyWaveNext"></p>
+                <p class="empty-steps">Upload → Check → Master</p>
+              </div>
             </div>
           </div>
 
@@ -174,6 +275,7 @@
               <input id="seekSlider" type="range" min="0" max="1000" value="0" disabled aria-label="Seek audio" />
               <span id="durationTime">0:00</span>
             </div>
+            <p class="helper-text control-hint" id="transportHint" hidden></p>
           </div>
 
           <audio id="originalPlayer" preload="auto"></audio>
@@ -224,16 +326,22 @@
             </div>
           </section>
 
-          <section class="export-box" aria-label="Free export downloads">
+          <section class="export-box is-pending" id="exportBox" aria-label="Free export downloads">
             <h2>Export</h2>
             <p id="exportText">Run a master to prepare free downloads.</p>
+            <p class="helper-text export-recommendation" id="exportRecommendation" hidden></p>
+            <p class="helper-text" id="exportFormatHint">Format guide appears after you master your track.</p>
+            <ul class="export-guide is-collapsed" id="exportFormatGuide" aria-label="Which format to download" hidden></ul>
             <div class="download-stack">
               <a class="download-button disabled" id="wavDownloadLink" aria-disabled="true">Download WAV 32-bit float</a>
+            </div>
+            <div class="download-stack download-stack--secondary">
               <a class="download-button secondary disabled" id="wav24DownloadLink" aria-disabled="true">Download WAV 24-bit PCM</a>
               <a class="download-button secondary disabled" id="wav16DownloadLink" aria-disabled="true">Download WAV 16-bit dithered</a>
               <a class="download-button secondary disabled" id="mp3DownloadLink" aria-disabled="true">Download MP3 320</a>
             </div>
-            <small id="encoderStatus">MP3 320 is encoded locally in your browser.</small>
+            <small id="encoderStatus">Encoder status loads with processing mode.</small>
+            <p class="export-footer" id="exportFooter">LUFS and true peak are estimates, not broadcast-certified meters.</p>
           </section>
         </aside>
       </section>

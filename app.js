@@ -1,6 +1,7 @@
 const PRESETS = {
   balanced: {
     label: "Balanced",
+    whenToUse: "Most mixes that need a clear, natural lift without sounding pushed.",
     description: "A clean, natural master with moderate loudness.",
     targetLoudness: -14.5,
     ceilingDb: -1,
@@ -11,6 +12,7 @@ const PRESETS = {
   },
   loud: {
     label: "Loud",
+    whenToUse: "Club, rap, or EDM tracks where you want more level and punch.",
     description: "A louder master with more limiting.",
     targetLoudness: -12.5,
     ceilingDb: -1.2,
@@ -21,6 +23,7 @@ const PRESETS = {
   },
   warm: {
     label: "Warm",
+    whenToUse: "Harsh or bright mixes, acoustic songs, or vocals that feel too edgy.",
     description: "A smoother sound with less harshness.",
     targetLoudness: -14.8,
     ceilingDb: -1,
@@ -31,6 +34,7 @@ const PRESETS = {
   },
   bright: {
     label: "Bright",
+    whenToUse: "Dull or muddy mixes that need more clarity, air, and presence.",
     description: "Adds clarity and presence.",
     targetLoudness: -14.5,
     ceilingDb: -1,
@@ -41,6 +45,7 @@ const PRESETS = {
   },
   bass: {
     label: "Bass Boost",
+    whenToUse: "Thin mixes, hip-hop, or electronic tracks that need more low-end weight.",
     description: "Adds more low-end weight.",
     targetLoudness: -14.3,
     ceilingDb: -1.2,
@@ -51,6 +56,7 @@ const PRESETS = {
   },
   streaming: {
     label: "Streaming Ready",
+    whenToUse: "Default for Spotify, Apple Music, and YouTube—balanced loudness with safe peaks.",
     description: "Targets a clean streaming-friendly loudness.",
     targetLoudness: -14,
     ceilingDb: -1,
@@ -71,6 +77,165 @@ const CLIPPING_THRESHOLD = 0.999;
 const TRUE_PEAK_OVERSAMPLE = 4;
 const LUFS_ABSOLUTE_GATE = -70;
 const LUFS_RELATIVE_GATE_OFFSET = -10;
+const API_FETCH_TIMEOUT_MS = 45000;
+
+const COPY = {
+  privacy: {
+    local: "Audio stays in your browser. Nothing is uploaded.",
+    server:
+      "Audio is sent to the mastering server for analysis and rendering, then deleted. Original playback stays in your browser.",
+  },
+  limits: "Mono or stereo · 150 MB max · 15 min max",
+  encoder: {
+    local: "MP3 320 is encoded locally in your browser.",
+    localWorker: "MP3 320 encoded locally on a background thread.",
+    server: "MP3 320 encoded on server (ephemeral processing).",
+  },
+  emptyWave: {
+    local: "Everything runs in your browser—upload a track to preview and master.",
+    server: "Server analysis and mastering—upload a track to get started.",
+  },
+  status: {
+    idle: "Upload audio to run an original audio check.",
+    serverIdle: "Upload audio for server-side analysis (processed and deleted immediately).",
+    analysisDone: "Original audio check complete. Choose a preset and master when ready.",
+    analysisDoneServer: "Original audio check complete. Choose a preset and master when ready.",
+    readyToMaster: "Ready to master",
+    masterReady: "Your master is ready. Download it for free.",
+    masterReadyServer: "Your master is ready. Processed on server and deleted after download.",
+  },
+  errors: {
+    serverUnreachable: "Could not reach the mastering server. Try again in a moment.",
+    serverWakeup: "Server may be waking up—retry in 30 seconds.",
+    masterFailed: "Mastering failed. Your original file was not changed.",
+  },
+  export: {
+    pending: "Run a master to prepare free downloads.",
+    busy: "Preparing free downloads...",
+    ready: "✓ Your master is ready. Download below.",
+    recommendLossy: "Recommended: WAV 24-bit for your DAW, or MP3 320 for quick sharing.",
+    recommendLossless: "Recommended: WAV 24-bit PCM for most releases; 32-bit float if your DAW needs headroom.",
+    formats: [
+      { label: "WAV 32-bit float", text: "Maximum headroom—best for further editing in a DAW." },
+      { label: "WAV 24-bit PCM", text: "Best default for release masters and most streaming uploads." },
+      { label: "WAV 16-bit dithered", text: "Smaller file; use when a platform or CD workflow needs 16-bit." },
+      { label: "MP3 320", text: "Easy sharing and demos—not for final archival quality." },
+    ],
+    formatHint: "Format guide appears after you master your track.",
+  },
+  workflow: {
+    steps: ["Upload", "Check", "Goal", "Export"],
+    emptyDropzone: "Start by uploading your mix—we will check levels and warn you about issues before mastering.",
+    emptyWaveNext: "What happens next: we analyze your file, you pick a mastering goal, then download your master.",
+    emptyWaveNextServer: "What happens next: your file is checked on the server, you choose a goal, then download formats here.",
+    youAreHere: {
+      empty: "Step 1 — Upload your mix",
+      loaded: "Step 2 — Checking your audio",
+      analyzed: "Step 3 — Choose a goal and master",
+      mastered: "Step 4 — Preview and download",
+      error: "Fix the issue and re-upload",
+    },
+    analysisPlaceholder: {
+      empty:
+        "Runs automatically after upload—we check loudness, peaks, and common issues before you master.",
+      loaded: "Checking your file now. Results will appear here in a moment.",
+    },
+    nextByPhase: {
+      empty: "Step 1: drop or choose an audio file above.",
+      loaded: "Step 2: hang tight while we analyze your original audio.",
+      analyzed: "Step 3: choose a mastering goal and click Master file when you are ready.",
+      mastered: "Step 4: preview your master and pick a download format below.",
+      error: "Fix the issue above or upload a different file, then try again.",
+    },
+  },
+  readiness: {
+    goodNext: "Next: pick a mastering goal (step 3), adjust fine tune if you like, then click Master file.",
+    minorNext: (count) =>
+      `${count} note${count === 1 ? "" : "s"} below—you can still master. Review them, then choose a goal and click Master file.`,
+    majorSilent: "Upload a file with audible audio before mastering.",
+    majorClipping: "Reduce clipping in your mix or re-export with more headroom, then upload again for best results.",
+    majorGeneric: "Address the major issue below, or try a cleaner WAV/FLAC export before mastering.",
+  },
+  warnings: {
+    lossy: {
+      title: "Compressed source (MP3, AAC, etc.)",
+      text: "Mastering can only work with the quality already in the file. Fine detail lost in compression cannot be restored.",
+      try: "Try this: upload WAV, AIFF, or FLAC from your DAW for the cleanest master.",
+    },
+    silent: {
+      title: "No usable audio detected",
+      text: "The file decoded but the signal is effectively silent.",
+      try: "Try this: export again with audible audio and re-upload.",
+    },
+    quiet: {
+      title: "Very quiet mix",
+      text: "Mastering will raise the level, but background noise and hiss may become more obvious.",
+      try: "Try this: turn up your mix in the DAW before export, leaving a few dB of peak headroom.",
+    },
+    loud: {
+      title: "Already very loud",
+      text: "There is little room to push louder without extra distortion. The master will stay conservative.",
+      try: "Try this: use Loud only if you need more level; otherwise Balanced or Streaming Ready is safer.",
+    },
+    truePeak: {
+      title: "True peak near clipping",
+      text: "Peaks are close to 0 dBTP. Limiting will leave extra headroom for streaming codecs.",
+      try: "Try this: lower your limiter ceiling in the mix by about 1 dB before re-exporting.",
+    },
+    clipping: {
+      title: "Possible clipping in the source",
+      text: "Distortion in the upload may sound harsher after limiting. Master Lab cannot remove clipped samples.",
+      try: "Try this: re-export with peaks around -6 dBFS and no clip lights on your meters.",
+    },
+    mono: {
+      title: "Mono source",
+      text: "The master stays mono—Master Lab does not widen a single-channel file into fake stereo.",
+      try: "Try this: fine for vocals, podcasts, and some club tracks; use a stereo mix if you want width.",
+    },
+    lowSampleRate: {
+      title: "Low sample rate",
+      text: "Below 44.1 kHz limits high-frequency detail in the master.",
+      try: "Try this: export at 44.1 kHz or 48 kHz from your DAW when possible.",
+    },
+    silence: {
+      title: "Long silence at start or end",
+      text: "Extra silence can skew loudness readings and lengthen the master.",
+      try: "Try this: trim fades in your DAW, or enable Trim leading silence before mastering.",
+    },
+    phase: {
+      title: "Stereo phase concern",
+      text: "Some stereo content may cancel when played in mono (phones, clubs, some playlists).",
+      try: "Try this: check your mix in mono and reduce wide stereo effects on core elements.",
+    },
+    overLimited: {
+      title: "Likely over-limited source",
+      text: "The mix has very little dynamic range already. Heavy limiting will not add much loudness.",
+      try: "Try this: choose Balanced or Streaming Ready instead of Loud.",
+    },
+    none: {
+      title: "No issues flagged",
+      text: "Levels and dynamics look reasonable for mastering.",
+      try: "",
+    },
+  },
+  preview: {
+    original: "Original: your upload before mastering. Use this to hear the mix you started with.",
+    mastered: "Mastered: the processed version after your chosen goal. Use this to judge the final sound.",
+    compare: "Compare: original and master overlaid on the waveform. Switch tabs to A/B by ear.",
+    locked: "Mastered and Compare unlock after you click Master file.",
+    volumeMatchOff: "Volume matched preview balances loudness so level changes do not fool your ears—available after mastering.",
+    volumeMatchOn: "Volume matched preview is on: Original and Mastered play at similar loudness for fair comparison.",
+  },
+  controls: {
+    noFile: "Upload a track in step 1 to enable mastering.",
+    analyzing: "Wait for the original audio check to finish.",
+    majorIssues: "Mastering is blocked until the major issue above is resolved.",
+    ready: "When you are happy with your goal and fine tune, click Master file.",
+    playDisabled: "Press play after your file loads and the waveform appears.",
+    tabsLocked: "Unavailable until mastering finishes—then compare before and after.",
+    goalsLocked: "Available after the original audio check finishes.",
+  },
+};
 
 function getApiBase() {
   const base = (window.MASTER_LAB_API || "").trim().replace(/\/$/, "");
@@ -79,6 +244,25 @@ function getApiBase() {
 
 function isApiMode() {
   return Boolean(getApiBase());
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function isFetchTimeoutError(error) {
+  return error?.name === "AbortError";
+}
+
+function apiFetchErrorMessage(error) {
+  if (isFetchTimeoutError(error)) return COPY.errors.serverWakeup;
+  return COPY.errors.serverUnreachable;
 }
 
 function getProbeBuffer() {
@@ -120,12 +304,21 @@ const state = {
   originalWaveformPeaks: null,
   masteredWaveformPeaks: null,
   masterJobId: null,
+  lastReadiness: null,
 };
 
 const els = {
+  appShell: document.querySelector("#appShell"),
   fileInput: document.querySelector("#fileInput"),
   dropzone: document.querySelector("#dropzone"),
   statusText: document.querySelector("#statusText"),
+  statusBanner: document.querySelector("#statusBanner"),
+  processingModeBadge: document.querySelector("#processingModeBadge"),
+  uploadPrivacyNote: document.querySelector("#uploadPrivacyNote"),
+  uploadLimitsLine: document.querySelector("#uploadLimitsLine"),
+  emptyWaveHint: document.querySelector("#emptyWaveHint"),
+  exportBox: document.querySelector("#exportBox"),
+  exportFooter: document.querySelector("#exportFooter"),
   resetButton: document.querySelector("#resetButton"),
   analysisCard: document.querySelector("#analysisCard"),
   readinessBadge: document.querySelector("#readinessBadge"),
@@ -174,6 +367,22 @@ const els = {
   wav16DownloadLink: document.querySelector("#wav16DownloadLink"),
   mp3DownloadLink: document.querySelector("#mp3DownloadLink"),
   encoderStatus: document.querySelector("#encoderStatus"),
+  workflowSteps: document.querySelector("#workflowSteps"),
+  readinessNextStep: document.querySelector("#readinessNextStep"),
+  analysisGuidance: document.querySelector("#analysisGuidance"),
+  masterButtonHint: document.querySelector("#masterButtonHint"),
+  previewModeHelp: document.querySelector("#previewModeHelp"),
+  volumeMatchHint: document.querySelector("#volumeMatchHint"),
+  emptyWaveNext: document.querySelector("#emptyWaveNext"),
+  transportHint: document.querySelector("#transportHint"),
+  exportFormatGuide: document.querySelector("#exportFormatGuide"),
+  exportFormatHint: document.querySelector("#exportFormatHint"),
+  exportRecommendation: document.querySelector("#exportRecommendation"),
+  workflowYouAreHereText: document.querySelector("#workflowYouAreHereText"),
+  analysisPlaceholder: document.querySelector("#analysisPlaceholder"),
+  analysisPlaceholderCopy: document.querySelector("#analysisPlaceholderCopy"),
+  masteringControls: document.querySelector("#masteringControls"),
+  presetSectionHint: document.querySelector("#presetSectionHint"),
 };
 
 function getAudioContext() {
@@ -185,6 +394,317 @@ function getAudioContext() {
 
 function setStatus(text) {
   els.statusText.textContent = text;
+}
+
+function setAppPhase(phase) {
+  if (els.appShell) els.appShell.dataset.phase = phase;
+  updateWorkflowGuidance(state.lastReadiness);
+}
+
+function setStatusBanner(message, variant = "error") {
+  if (!els.statusBanner) return;
+  if (!message) {
+    clearStatusBanner();
+    return;
+  }
+  els.statusBanner.textContent = message;
+  els.statusBanner.className = `status-banner status-banner--${variant} is-visible`;
+}
+
+function clearStatusBanner() {
+  if (!els.statusBanner) return;
+  els.statusBanner.textContent = "";
+  els.statusBanner.className = "status-banner";
+}
+
+function updateProcessingModeBadge() {
+  if (!els.processingModeBadge) return;
+  const server = isApiMode();
+  els.processingModeBadge.textContent = server ? "Server processing" : "In-browser";
+  els.processingModeBadge.classList.toggle("is-server", server);
+  els.processingModeBadge.classList.toggle("is-local", !server);
+}
+
+function updateDropzoneState(hasFile) {
+  els.dropzone.classList.toggle("is-empty", !hasFile);
+  els.dropzone.classList.toggle("has-file", Boolean(hasFile));
+}
+
+function setExportState(stateClass) {
+  if (!els.exportBox) return;
+  els.exportBox.classList.remove("is-pending", "is-ready", "is-busy");
+  if (stateClass) els.exportBox.classList.add(stateClass);
+}
+
+function applyModeCopy() {
+  if (els.uploadPrivacyNote) {
+    els.uploadPrivacyNote.textContent = isApiMode() ? COPY.privacy.server : COPY.privacy.local;
+  }
+  if (els.uploadLimitsLine) els.uploadLimitsLine.textContent = COPY.limits;
+  if (els.emptyWaveHint) {
+    els.emptyWaveHint.textContent = isApiMode() ? COPY.emptyWave.server : COPY.emptyWave.local;
+  }
+  if (els.emptyWaveNext) {
+    els.emptyWaveNext.textContent = isApiMode()
+      ? COPY.workflow.emptyWaveNextServer
+      : COPY.workflow.emptyWaveNext;
+  }
+  if (els.exportFooter) {
+    els.exportFooter.textContent = `${COPY.limits}. LUFS and true peak are estimates, not broadcast-certified meters.`;
+  }
+  if (els.encoderStatus) {
+    els.encoderStatus.textContent = isApiMode() ? COPY.encoder.server : COPY.encoder.local;
+  }
+  renderExportFormatGuide();
+  updateExportFormatVisibility();
+  updateProcessingModeBadge();
+}
+
+function formatPresetGuidance(preset) {
+  return `Best for: ${preset.whenToUse} ${preset.description}`;
+}
+
+function syncPresetButtonCopy() {
+  els.presetButtons.forEach((button) => {
+    const preset = PRESETS[button.dataset.preset];
+    if (!preset) return;
+    const span = button.querySelector("span");
+    if (span) span.textContent = preset.description;
+  });
+}
+
+function renderExportFormatGuide() {
+  if (!els.exportFormatGuide) return;
+  clearChildren(els.exportFormatGuide);
+  COPY.export.formats.forEach((item) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<strong>${item.label}</strong> — ${item.text}`;
+    els.exportFormatGuide.appendChild(li);
+  });
+}
+
+function updateExportFormatVisibility() {
+  const mastered = els.appShell?.dataset.phase === "mastered";
+  if (els.exportFormatGuide) {
+    els.exportFormatGuide.hidden = !mastered;
+    els.exportFormatGuide.classList.toggle("is-collapsed", !mastered);
+  }
+  if (els.exportFormatHint) {
+    els.exportFormatHint.hidden = mastered;
+    els.exportFormatHint.textContent = COPY.export.formatHint;
+  }
+}
+
+function setAnalysisPlaceholderVisible(visible, copyKey = "empty") {
+  if (els.analysisPlaceholder) {
+    els.analysisPlaceholder.classList.toggle("hidden", !visible);
+  }
+  if (els.analysisPlaceholderCopy && visible) {
+    els.analysisPlaceholderCopy.textContent = COPY.workflow.analysisPlaceholder[copyKey];
+  }
+}
+
+function showAnalysisResults() {
+  setAnalysisPlaceholderVisible(false);
+  els.analysisCard.classList.remove("hidden");
+}
+
+function resetAnalysisPanel() {
+  els.analysisCard.classList.add("hidden");
+  els.analysisCard.classList.remove("is-ready");
+  setAnalysisPlaceholderVisible(true, "empty");
+}
+
+function setMasteringControlsLocked(locked) {
+  if (els.masteringControls) {
+    els.masteringControls.classList.toggle("is-locked", locked);
+    els.masteringControls.setAttribute("aria-disabled", locked ? "true" : "false");
+  }
+  if (els.presetSectionHint) {
+    els.presetSectionHint.hidden = !locked;
+    els.presetSectionHint.textContent = COPY.controls.goalsLocked;
+  }
+  els.presetButtons.forEach((button) => {
+    button.disabled = locked;
+  });
+  if (els.intensitySlider) els.intensitySlider.disabled = locked;
+  if (els.warmthSlider) els.warmthSlider.disabled = locked;
+  if (els.airSlider) els.airSlider.disabled = locked;
+  if (els.trimSilenceToggle) els.trimSilenceToggle.disabled = locked;
+}
+
+function updateWorkflowYouAreHere() {
+  if (!els.workflowYouAreHereText) return;
+  const phase = els.appShell?.dataset.phase || "empty";
+  els.workflowYouAreHereText.textContent =
+    COPY.workflow.youAreHere[phase] || COPY.workflow.youAreHere.empty;
+}
+
+function updateExportRecommendation() {
+  if (!els.exportRecommendation) return;
+  const hasMaster = Boolean(state.masteredBuffer || state.masteredPreviewUrl);
+  if (!hasMaster) {
+    els.exportRecommendation.hidden = true;
+    els.exportRecommendation.textContent = "";
+    return;
+  }
+  els.exportRecommendation.hidden = false;
+  els.exportRecommendation.textContent = state.file && isLossyFile(state.file)
+    ? COPY.export.recommendLossy
+    : COPY.export.recommendLossless;
+}
+
+function getWorkflowStepForPhase(phase) {
+  const map = {
+    empty: "upload",
+    loaded: "upload",
+    analyzed: "goal",
+    mastered: "export",
+    error: "upload",
+  };
+  return map[phase] || "upload";
+}
+
+function updateWorkflowStepHighlight() {
+  if (!els.workflowSteps) return;
+  const phase = els.appShell?.dataset.phase || "empty";
+  const activeStep = getWorkflowStepForPhase(phase);
+  const order = ["upload", "check", "goal", "export"];
+  const activeIndex = order.indexOf(activeStep);
+
+  els.workflowSteps.querySelectorAll("li").forEach((item) => {
+    const step = item.dataset.workflowStep;
+    const index = order.indexOf(step);
+    item.classList.remove("is-active", "is-done");
+    if (phase === "loaded" && step === "upload") {
+      item.classList.add("is-active");
+    } else if (phase === "analyzed" && step === "check") {
+      item.classList.add("is-active");
+    } else if (index < activeIndex || (phase === "mastered" && index < order.length - 1)) {
+      if (phase === "mastered" && step === "export") {
+        item.classList.add("is-active");
+      } else if (index < activeIndex) {
+        item.classList.add("is-done");
+      }
+    } else if (step === activeStep) {
+      item.classList.add("is-active");
+    }
+  });
+
+  if (phase === "analyzed") {
+    els.workflowSteps.querySelector('[data-workflow-step="upload"]')?.classList.add("is-done");
+    els.workflowSteps.querySelector('[data-workflow-step="check"]')?.classList.add("is-done");
+    els.workflowSteps.querySelector('[data-workflow-step="goal"]')?.classList.add("is-active");
+  }
+  if (phase === "loaded") {
+    els.workflowSteps.querySelector('[data-workflow-step="upload"]')?.classList.add("is-active");
+  }
+  if (phase === "mastered") {
+    order.forEach((step) => {
+      const item = els.workflowSteps.querySelector(`[data-workflow-step="${step}"]`);
+      item?.classList.remove("is-active");
+      item?.classList.add("is-done");
+    });
+    els.workflowSteps.querySelector('[data-workflow-step="export"]')?.classList.add("is-active");
+    els.workflowSteps.querySelector('[data-workflow-step="export"]')?.classList.remove("is-done");
+  }
+}
+
+function updatePreviewModeHelp(source = state.activeSource) {
+  if (!els.previewModeHelp) return;
+  const hasMastered = Boolean(state.masteredBuffer || state.masteredPreviewUrl);
+  if (!hasMastered) {
+    els.previewModeHelp.textContent = `${COPY.preview.original} ${COPY.preview.locked}`;
+  } else {
+    const key = source === "compare" ? "compare" : source === "mastered" ? "mastered" : "original";
+    els.previewModeHelp.textContent = COPY.preview[key];
+  }
+
+  const tabSuffix = hasMastered ? "" : " (after mastering)";
+  els.originalTab.title = COPY.preview.original;
+  els.masteredTab.title = hasMastered ? COPY.preview.mastered : `${COPY.preview.mastered}${tabSuffix}`;
+  els.compareTab.title = hasMastered ? COPY.preview.compare : `${COPY.preview.compare}${tabSuffix}`;
+
+  if (els.volumeMatchHint) {
+    if (!hasMastered || els.volumeMatchToggle.disabled) {
+      els.volumeMatchHint.textContent = COPY.preview.volumeMatchOff;
+    } else if (els.volumeMatchToggle.checked) {
+      els.volumeMatchHint.textContent = COPY.preview.volumeMatchOn;
+    } else {
+      els.volumeMatchHint.textContent = COPY.preview.volumeMatchOff;
+    }
+  }
+}
+
+function updateMasterButtonHint() {
+  if (!els.masterButtonHint) return;
+  const phase = els.appShell?.dataset.phase || "empty";
+  let hint = COPY.controls.noFile;
+  if (phase === "loaded") {
+    hint = COPY.controls.analyzing;
+  } else if (phase === "analyzed") {
+    if (els.masterButton.disabled) {
+      hint = COPY.controls.majorIssues;
+    } else if (state.lastReadiness?.level === "major") {
+      hint = "A major issue was flagged below. You can try mastering, but fixing the source first is recommended.";
+    } else {
+      hint = COPY.controls.ready;
+    }
+  } else if (phase === "mastered") {
+    hint = "Master complete—use preview tabs or download your files in step 4.";
+  } else if (phase === "error") {
+    hint = COPY.workflow.nextByPhase.error;
+  }
+  els.masterButtonHint.textContent = hint;
+  els.masterButtonHint.classList.toggle("is-disabled", els.masterButton.disabled);
+}
+
+function updateTransportHint() {
+  if (!els.transportHint) return;
+  const hasAudio = Boolean(state.originalBuffer || state.originalWaveformPeaks || state.originalUrl);
+  if (!hasAudio || els.playButton.disabled) {
+    els.transportHint.textContent = COPY.controls.playDisabled;
+    els.transportHint.hidden = false;
+  } else {
+    els.transportHint.hidden = true;
+  }
+}
+
+function updateReadinessNextStep(readiness) {
+  if (!els.readinessNextStep) return;
+  if (!readiness?.nextStep || els.analysisCard.classList.contains("hidden")) {
+    els.readinessNextStep.hidden = true;
+    els.readinessNextStep.textContent = "";
+    return;
+  }
+  els.readinessNextStep.hidden = false;
+  els.readinessNextStep.textContent = readiness.nextStep;
+  els.readinessNextStep.className = `helper-text readiness-next is-${readiness.level}`;
+}
+
+function updateWorkflowGuidance(readiness = null) {
+  const phase = els.appShell?.dataset.phase || "empty";
+  updateWorkflowStepHighlight();
+  if (els.emptyWaveNext && !els.emptyWave.classList.contains("hidden")) {
+    els.emptyWaveNext.textContent = isApiMode()
+      ? COPY.workflow.emptyWaveNextServer
+      : COPY.workflow.emptyWaveNext;
+  }
+  if (readiness) updateReadinessNextStep(readiness);
+  else if (phase !== "analyzed" && phase !== "error") updateReadinessNextStep(null);
+  updateMasterButtonHint();
+  updatePreviewModeHelp();
+  updateTransportHint();
+  updateExportRecommendation();
+  updateExportFormatVisibility();
+  updateWorkflowYouAreHere();
+  if (phase === "loaded") {
+    setAnalysisPlaceholderVisible(true, "loaded");
+  } else if (phase === "empty" || phase === "error") {
+    if (els.analysisCard.classList.contains("hidden")) {
+      setAnalysisPlaceholderVisible(true, "empty");
+    }
+  }
 }
 
 function setProgress(step, percent, label) {
@@ -332,7 +852,7 @@ function updateControlOutputs() {
 function selectPreset(key, applyDefaults = true) {
   state.selectedPreset = key;
   const preset = PRESETS[key];
-  els.presetDescription.textContent = preset.description;
+  els.presetDescription.textContent = formatPresetGuidance(preset);
   els.presetButtons.forEach((button) => {
     const selected = button.dataset.preset === key;
     button.classList.toggle("active", selected);
@@ -349,6 +869,8 @@ function selectPreset(key, applyDefaults = true) {
 
 async function loadFile(file) {
   resetSession(false);
+  clearStatusBanner();
+  updateDropzoneState(true);
   state.file = file;
   state.fileName = sanitizeBaseName(file.name);
   state.fileExtension = getExtension(file.name);
@@ -366,6 +888,7 @@ async function loadFile(file) {
     return;
   }
 
+  setAppPhase("loaded");
   setStatus("Uploading audio...");
   setProgress("analyze", 12, "Uploading audio");
 
@@ -408,7 +931,10 @@ async function loadFile(file) {
     drawWaveform();
     setPlaybackSource("original", false);
     setProgress("prepare", 45, "Ready to master");
-    setStatus("Original audio check complete. Choose a preset and master when ready.");
+    setAppPhase("analyzed");
+    setStatus(
+      readiness.level === "good" ? COPY.status.readyToMaster : COPY.status.analysisDone
+    );
 
     els.masterButton.disabled = analysis.peak < 0.00001;
     els.playButton.disabled = false;
@@ -431,13 +957,14 @@ async function loadFileViaApi(file) {
     return;
   }
 
+  setAppPhase("loaded");
   setStatus("Uploading to server for analysis...");
   setProgress("analyze", 12, "Uploading audio");
 
   try {
     const form = new FormData();
     form.append("file", file);
-    const response = await fetch(`${getApiBase()}/api/analyze`, { method: "POST", body: form });
+    const response = await fetchWithTimeout(`${getApiBase()}/api/analyze`, { method: "POST", body: form });
     const payload = await response.json();
     if (!response.ok) {
       renderDecodeError(file, payload.error || "Server analysis failed.");
@@ -466,7 +993,10 @@ async function loadFileViaApi(file) {
     drawWaveform();
     setPlaybackSource("original", false);
     setProgress("prepare", 45, "Ready to master");
-    setStatus("Original audio check complete (server). Choose a preset and master when ready.");
+    setAppPhase("analyzed");
+    setStatus(
+      readiness.level === "good" ? COPY.status.readyToMaster : COPY.status.analysisDoneServer
+    );
 
     els.masterButton.disabled = state.analysis.peak < 0.00001;
     els.playButton.disabled = false;
@@ -475,14 +1005,17 @@ async function loadFileViaApi(file) {
     els.emptyWave.classList.add("hidden");
   } catch (error) {
     console.error(error);
-    renderDecodeError(file, "Could not reach the mastering server. Check config.js and try again.");
+    renderDecodeError(file, apiFetchErrorMessage(error));
   }
 }
 
 function renderDecodeError(file, message) {
+  setAppPhase("error");
+  setStatusBanner(message, "error");
   setStatus(message);
   setProgress("analyze", 0, "Audio decoding failed");
-  els.analysisCard.classList.remove("hidden");
+  showAnalysisResults();
+  els.analysisCard.classList.remove("is-ready");
   els.readinessBadge.textContent = "Major issues detected";
   els.readinessBadge.className = "readiness-badge major";
   els.readinessCopy.textContent = "Mastering cannot continue until a supported audio file is uploaded.";
@@ -499,6 +1032,15 @@ function renderDecodeError(file, message) {
     text: message,
   });
   els.masterButton.disabled = true;
+  setMasteringControlsLocked(true);
+  state.lastReadiness = {
+    status: "Major issues detected",
+    level: "major",
+    copy: "Mastering cannot continue until a supported audio file is uploaded.",
+    nextStep: COPY.workflow.nextByPhase.error,
+  };
+  updateReadinessNextStep(state.lastReadiness);
+  updateWorkflowGuidance(state.lastReadiness);
 }
 
 function renderAnalysis(file, buffer, analysis, warnings, readiness) {
@@ -521,7 +1063,9 @@ function renderAnalysis(file, buffer, analysis, warnings, readiness) {
     ["Clipping status", analysis.clippingSamples > 0 ? "Possible clipping detected" : "No clipping detected"],
   ];
 
-  els.analysisCard.classList.remove("hidden");
+  showAnalysisResults();
+  els.analysisCard.classList.toggle("is-ready", readiness.level === "good");
+  setMasteringControlsLocked(analysis.peak < 0.00001);
   els.readinessBadge.textContent = readiness.status;
   els.readinessBadge.className = `readiness-badge ${readiness.level}`;
   els.readinessCopy.textContent = readiness.copy;
@@ -531,124 +1075,100 @@ function renderAnalysis(file, buffer, analysis, warnings, readiness) {
   if (warnings.length) {
     warnings.forEach((warning) => appendWarning(els.warningList, warning));
   } else {
+    const copy = COPY.warnings.none;
     appendWarning(els.warningList, {
       level: "good",
-      title: "No major warnings",
-      text: "This file looks ready for mastering.",
+      title: copy.title,
+      text: copy.text,
     });
   }
+  state.lastReadiness = readiness;
+  updateReadinessNextStep(readiness);
+  updateWorkflowGuidance(readiness);
+}
+
+function warningFromCopy(copyKey, level, extraText = "") {
+  const copy = COPY.warnings[copyKey];
+  const tryLine = copy.try ? ` ${copy.try}` : "";
+  return {
+    level,
+    title: copy.title,
+    text: extraText ? `${copy.text} ${extraText}` : `${copy.text}${tryLine}`,
+  };
 }
 
 function buildWarnings(file, buffer, analysis) {
   const warnings = [];
 
   if (isLossyFile(file)) {
-    warnings.push({
-      level: "minor",
-      title: "Compressed source",
-      text: "This is a compressed audio file. For best quality, use WAV, AIFF, or FLAC when possible.",
-    });
+    warnings.push(warningFromCopy("lossy", "minor"));
   }
   if (analysis.peak < 0.00001 || !Number.isFinite(analysis.rmsDb)) {
-    warnings.push({
-      level: "major",
-      title: "No usable audio detected",
-      text: "No audio was detected in this file.",
-    });
+    warnings.push(warningFromCopy("silent", "major"));
   }
   if (analysis.loudnessDb < -32) {
-    warnings.push({
-      level: "minor",
-      title: "Very quiet source",
-      text: "This file is very quiet. Mastering can raise it, but noise may become more noticeable.",
-    });
+    warnings.push(warningFromCopy("quiet", "minor"));
   }
   if (analysis.loudnessDb > -10 || analysis.peakDb > -0.5) {
-    warnings.push({
-      level: "minor",
-      title: "Already loud",
-      text: "This file is already very loud. The master will avoid pushing it much harder.",
-    });
+    warnings.push(warningFromCopy("loud", "minor"));
   }
   if (analysis.truePeakDb > -0.2) {
-    warnings.push({
-      level: "minor",
-      title: "True peak is close to clipping",
-      text: "The master will leave extra headroom to reduce codec distortion risk.",
-    });
+    warnings.push(warningFromCopy("truePeak", "minor"));
   }
   if (analysis.clippingSamples > 0) {
-    warnings.push({
-      level: analysis.clippingRatio > 0.001 ? "major" : "minor",
-      title: "Possible clipping detected",
-      text: "Possible clipping detected. Mastering may make existing distortion more noticeable.",
-    });
+    warnings.push(warningFromCopy("clipping", analysis.clippingRatio > 0.001 ? "major" : "minor"));
   }
   if (buffer.numberOfChannels === 1) {
-    warnings.push({
-      level: "minor",
-      title: "Mono source",
-      text: "This file is mono. The master will keep it centered rather than inventing stereo width.",
-    });
+    warnings.push(warningFromCopy("mono", "minor"));
   }
   if (buffer.sampleRate < 44100) {
-    warnings.push({
-      level: "minor",
-      title: "Low sample rate",
-      text: "For best quality, upload at least 44.1 kHz when possible.",
-    });
+    warnings.push(warningFromCopy("lowSampleRate", "minor"));
   }
   if (analysis.leadingSilenceSeconds > 3 || analysis.trailingSilenceSeconds > 8) {
-    warnings.push({
-      level: "minor",
-      title: "Long silence detected",
-      text: "There is notable silence at the start or end. Trim it before upload if it is not intentional.",
-    });
+    warnings.push(warningFromCopy("silence", "minor"));
   }
   if (Number.isFinite(analysis.stereoCorrelation) && analysis.stereoCorrelation < -0.2) {
-    warnings.push({
-      level: "minor",
-      title: "Stereo phase concern",
-      text: "Parts of the stereo image may cancel when summed to mono.",
-    });
+    warnings.push(warningFromCopy("phase", "minor"));
   }
   if (analysis.crestDb < 6 && analysis.loudnessDb > -12) {
-    warnings.push({
-      level: "minor",
-      title: "Likely over-limited source",
-      text: "This source already has low dynamics. Mastering will avoid heavy extra limiting.",
-    });
+    warnings.push(warningFromCopy("overLimited", "minor"));
   }
 
   return warnings;
 }
 
 function getReadiness(warnings, analysis) {
-  if (warnings.some((warning) => warning.level === "major") || analysis.peak < 0.00001) {
+  const majorWarnings = warnings.filter((w) => w.level === "major");
+  if (majorWarnings.length > 0 || analysis.peak < 0.00001) {
     if (analysis.peak < 0.00001) {
       return {
         status: "Major issues detected",
         level: "major",
         copy: "No usable audio was detected. Upload a file with audible signal before mastering.",
+        nextStep: COPY.readiness.majorSilent,
       };
     }
+    const hasClipping = majorWarnings.some((w) => w.title.includes("clipping"));
     return {
       status: "Major issues detected",
       level: "major",
-      copy: "You can continue, but a cleaner source may produce a better master.",
+      copy: "Fix the major issue below for the best result. Mastering stays disabled until the file is usable.",
+      nextStep: hasClipping ? COPY.readiness.majorClipping : COPY.readiness.majorGeneric,
     };
   }
   if (warnings.length > 0) {
     return {
       status: "Minor issues detected",
       level: "minor",
-      copy: "You can continue, but the warnings may affect the result.",
+      copy: `${warnings.length} note${warnings.length === 1 ? "" : "s"} below—you can still master.`,
+      nextStep: COPY.readiness.minorNext(warnings.length),
     };
   }
   return {
     status: "Good to master",
     level: "good",
     copy: "This file looks ready for mastering.",
+    nextStep: COPY.readiness.goodNext,
   };
 }
 
@@ -1225,6 +1745,7 @@ async function runMastering() {
   }
 
   pausePlayback();
+  clearStatusBanner();
   disableExports();
   els.masterButton.disabled = true;
   els.masterButton.textContent = "Mastering...";
@@ -1258,10 +1779,14 @@ async function runMastering() {
     updateStats();
     setPlaybackSource("mastered", false);
     setProgress("done", 100, "Master ready");
-    setStatus("Your master is ready. Download it for free.");
+    setAppPhase("mastered");
+    setStatusBanner(COPY.status.masterReady, "success");
+    setStatus(COPY.status.masterReady);
   } catch (error) {
     console.error(error);
-    setStatus("Mastering failed. Your original file was not changed.");
+    setAppPhase("error");
+    setStatusBanner(COPY.errors.masterFailed, "error");
+    setStatus(COPY.errors.masterFailed);
     setProgress("prepare", 0, "Mastering failed");
   } finally {
     els.masterButton.disabled = false;
@@ -1273,6 +1798,7 @@ async function runMasteringViaApi() {
   if (!state.file || !state.apiProbe) return;
 
   pausePlayback();
+  clearStatusBanner();
   disableExports();
   els.masterButton.disabled = true;
   els.masterButton.textContent = "Mastering...";
@@ -1291,7 +1817,10 @@ async function runMasteringViaApi() {
     form.append("air", String(controls.air));
     form.append("trimSilence", controls.trimSilence ? "true" : "false");
 
-    const startResponse = await fetch(`${getApiBase()}/api/master/jobs`, { method: "POST", body: form });
+    const startResponse = await fetchWithTimeout(`${getApiBase()}/api/master/jobs`, {
+      method: "POST",
+      body: form,
+    });
     const startPayload = await startResponse.json();
     if (!startResponse.ok) {
       throw new Error(startPayload.error || "Could not start mastering job");
@@ -1304,7 +1833,7 @@ async function runMasteringViaApi() {
     let job = startPayload;
     while (job.status === "queued" || job.status === "processing") {
       await new Promise((resolve) => setTimeout(resolve, 800));
-      const statusResponse = await fetch(`${getApiBase()}/api/jobs/${state.masterJobId}`);
+      const statusResponse = await fetchWithTimeout(`${getApiBase()}/api/jobs/${state.masterJobId}`);
       job = await statusResponse.json();
       if (!statusResponse.ok) {
         throw new Error(job.error || "Job status failed");
@@ -1351,8 +1880,10 @@ async function runMasteringViaApi() {
     enableDownload(els.wav24DownloadLink, state.wav24Url, `${baseName}-master-24bit.wav`, "Download WAV 24-bit PCM");
     enableDownload(els.wav16DownloadLink, state.wav16Url, `${baseName}-master-16bit-dithered.wav`, "Download WAV 16-bit dithered");
     enableDownload(els.mp3DownloadLink, state.mp3Url, `${baseName}-master-320.mp3`, "Download MP3 320");
-    els.encoderStatus.textContent = "MP3 320 encoded on server (ephemeral processing).";
-    els.exportText.textContent = "Your master is ready. Download it for free.";
+    els.encoderStatus.textContent = COPY.encoder.server;
+    els.exportText.textContent = COPY.export.ready;
+    setExportState("is-ready");
+    updateExportRecommendation();
 
     els.masteredTab.disabled = false;
     els.compareTab.disabled = false;
@@ -1360,10 +1891,15 @@ async function runMasteringViaApi() {
     updateStats();
     setPlaybackSource("mastered", false);
     setProgress("done", 100, "Master ready");
-    setStatus("Your master is ready. Processed on server and deleted after download.");
+    setAppPhase("mastered");
+    setStatusBanner(COPY.status.masterReady, "success");
+    setStatus(COPY.status.masterReadyServer);
   } catch (error) {
     console.error(error);
-    setStatus("Mastering failed. Your original file was not changed.");
+    setAppPhase("error");
+    const message = isFetchTimeoutError(error) ? COPY.errors.serverWakeup : COPY.errors.masterFailed;
+    setStatusBanner(message, "error");
+    setStatus(message);
     setProgress("prepare", 0, "Mastering failed");
   } finally {
     els.masterButton.disabled = false;
@@ -1372,7 +1908,7 @@ async function runMasteringViaApi() {
 }
 
 async function fetchJobFileBlob(jobId, kind) {
-  const response = await fetch(`${getApiBase()}/api/jobs/${jobId}/file/${kind}`);
+  const response = await fetchWithTimeout(`${getApiBase()}/api/jobs/${jobId}/file/${kind}`);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `Could not download ${kind}`);
@@ -1420,9 +1956,7 @@ async function prepareDownloads(buffer) {
       const mp3 = await encodeMp3Local(buffer, 320);
       state.mp3Url = URL.createObjectURL(mp3.blob);
       enableDownload(els.mp3DownloadLink, state.mp3Url, mp3Name, "Download MP3 320");
-      els.encoderStatus.textContent = mp3.offMainThread
-        ? "MP3 320 encoded locally on a background thread."
-        : "MP3 320 encoded locally in your browser.";
+      els.encoderStatus.textContent = mp3.offMainThread ? COPY.encoder.localWorker : COPY.encoder.local;
     } catch (error) {
       console.error(error);
       disableDownload(els.mp3DownloadLink, "MP3 encode failed");
@@ -1433,7 +1967,9 @@ async function prepareDownloads(buffer) {
     els.encoderStatus.textContent = "Local MP3 encoder did not load. WAV downloads are still ready.";
   }
 
-  els.exportText.textContent = "Your master is ready. Download it for free.";
+  els.exportText.textContent = COPY.export.ready;
+  setExportState("is-ready");
+  updateExportRecommendation();
 }
 
 function isMp3WorkerAvailable() {
@@ -1532,7 +2068,8 @@ function disableExports() {
   disableDownload(els.wav24DownloadLink, "Download WAV 24-bit PCM");
   disableDownload(els.wav16DownloadLink, "Download WAV 16-bit dithered");
   disableDownload(els.mp3DownloadLink, "Download MP3 320");
-  els.exportText.textContent = "Preparing free downloads...";
+  els.exportText.textContent = COPY.export.busy;
+  setExportState("is-busy");
 }
 
 function updateStats() {
@@ -1702,6 +2239,7 @@ function setPlaybackSource(source, preserveTime = true) {
     player.play().then(updatePlaybackProgress).catch(() => {});
     els.playIcon.textContent = "Pause";
   }
+  updatePreviewModeHelp(source);
 }
 
 function setSourceTabs(source) {
@@ -1800,6 +2338,7 @@ function applyPreviewVolume() {
 
   const diff = state.analysis.loudnessDb - state.masteredAnalysis.loudnessDb;
   els.masteredPlayer.volume = clamp(dbToLinear(diff), 0.25, 1);
+  updatePreviewModeHelp();
 }
 
 function encodeWavFloat32(buffer) {
@@ -1942,8 +2481,11 @@ function resetMasterOnly() {
   disableDownload(els.wav24DownloadLink, "Download WAV 24-bit PCM");
   disableDownload(els.wav16DownloadLink, "Download WAV 16-bit dithered");
   disableDownload(els.mp3DownloadLink, "Download MP3 320");
-  els.exportText.textContent = "Run a master to prepare free downloads.";
-  els.encoderStatus.textContent = "MP3 320 is encoded locally in your browser.";
+  els.exportText.textContent = COPY.export.pending;
+  setExportState("is-pending");
+  els.encoderStatus.textContent = isApiMode() ? COPY.encoder.server : COPY.encoder.local;
+  updatePreviewModeHelp();
+  updateExportRecommendation();
 }
 
 function cleanupUrls() {
@@ -1963,6 +2505,7 @@ function cleanupUrls() {
 
 function resetSession(clearInput = true) {
   pausePlayback();
+  clearStatusBanner();
   cleanupUrls();
   state.originalBuffer = null;
   state.masteredBuffer = null;
@@ -1973,15 +2516,19 @@ function resetSession(clearInput = true) {
   state.bitDepth = null;
   state.analysis = null;
   state.masteredAnalysis = null;
+  state.lastReadiness = null;
 
   if (clearInput) els.fileInput.value = "";
   els.originalPlayer.removeAttribute("src");
   els.masteredPlayer.removeAttribute("src");
   els.trackTitle.textContent = "No track loaded";
   els.trackDetails.textContent = "Original and mastered waveforms will appear here.";
-  els.analysisCard.classList.add("hidden");
+  resetAnalysisPanel();
   clearChildren(els.analysisGrid);
+  setMasteringControlsLocked(true);
   clearChildren(els.warningList);
+  updateDropzoneState(false);
+  setAppPhase("empty");
   els.masterButton.disabled = true;
   els.playButton.disabled = true;
   els.seekSlider.disabled = true;
@@ -2001,7 +2548,7 @@ function resetSession(clearInput = true) {
   setSourceTabs("original");
   drawEmptyCanvas();
   setProgress("analyze", 0, "Ready");
-  setStatus("Upload audio to run an original audio check.");
+  setStatus(isApiMode() ? COPY.status.serverIdle : COPY.status.idle);
 }
 
 function drawEmptyCanvas() {
@@ -2052,7 +2599,9 @@ els.waveformWrap.addEventListener("keydown", (event) => {
 els.originalTab.addEventListener("click", () => setPlaybackSource("original"));
 els.masteredTab.addEventListener("click", () => setPlaybackSource("mastered"));
 els.compareTab.addEventListener("click", () => setPlaybackSource("compare"));
-els.volumeMatchToggle.addEventListener("change", applyPreviewVolume);
+els.volumeMatchToggle.addEventListener("change", () => {
+  applyPreviewVolume();
+});
 els.intensitySlider.addEventListener("input", updateControlOutputs);
 els.presetButtons.forEach((button) => {
   button.addEventListener("click", () => selectPreset(button.dataset.preset));
@@ -2073,19 +2622,21 @@ window.addEventListener("pagehide", () => {
 });
 
 function initApp() {
-  if (isApiMode()) {
-    setStatus("Upload audio for server-side analysis (processed and deleted immediately).");
-    const uploadNote = document.querySelector("#uploadPrivacyNote");
-    if (uploadNote) {
-      uploadNote.textContent =
-        "Audio is sent to the mastering server for analysis and rendering, then deleted. Original playback stays in your browser.";
-    }
-  } else {
+  applyModeCopy();
+  syncPresetButtonCopy();
+  resetAnalysisPanel();
+  setMasteringControlsLocked(true);
+  setAppPhase("empty");
+  updateDropzoneState(false);
+  setExportState("is-pending");
+  if (!isApiMode()) {
     loadLocalEncoderScript();
   }
+  setStatus(isApiMode() ? COPY.status.serverIdle : COPY.status.idle);
   selectPreset("streaming", true);
   setProgress("analyze", 0, "Ready");
   drawEmptyCanvas();
+  updateWorkflowGuidance();
 }
 
 function loadLocalEncoderScript() {
