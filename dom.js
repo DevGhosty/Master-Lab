@@ -609,7 +609,7 @@ export function renderDecodeError(file, message, kind = "decode") {
     copy: isServer
       ? COPY.serverStatus.wakeHint
       : "Mastering cannot continue until a supported audio file is uploaded.",
-    nextStep: isServer ? COPY.errors.serverUnavailable : COPY.workflow.nextByPhase.error,
+    nextStep: isServer ? COPY.errors.serverRetryStep : COPY.workflow.nextByPhase.error,
   };
   updateReadinessNextStep(state.lastReadiness);
   updateWorkflowGuidance(state.lastReadiness);

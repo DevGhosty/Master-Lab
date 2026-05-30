@@ -59,7 +59,7 @@
             <div
               class="server-status-bar"
               id="serverStatus"
-              hidden
+              data-status="checking"
               role="status"
               aria-live="polite"
               aria-label="Mastering server status"
@@ -369,6 +369,11 @@
     </main>
 
     <script src="config.js"></script>
+    <script>
+      if ((window.MASTER_LAB_API || "").trim()) {
+        document.documentElement.classList.add("api-mode");
+      }
+    </script>
     <script type="module" src="app.js"></script>
   </body>
 </html>

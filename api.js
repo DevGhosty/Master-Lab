@@ -4,6 +4,7 @@ import {
   getApiBase,
   isApiMode,
   API_FETCH_TIMEOUT_MS,
+  API_ANALYZE_TIMEOUT_MS,
   API_HEALTH_TIMEOUT_MS,
   API_HEALTH_WAKE_TIMEOUT_MS,
   API_HEALTH_POLL_ONLINE_MS,
@@ -58,8 +59,24 @@ export function isFetchTimeoutError(error) {
 }
 
 export function apiFetchErrorMessage(error) {
-  if (isFetchTimeoutError(error)) return COPY.errors.serverUnavailable;
+  if (isServerReachabilityError(error)) return COPY.errors.serverUnavailable;
   return COPY.errors.serverUnreachable;
+}
+
+function isServerReachabilityError(error) {
+  if (isFetchTimeoutError(error)) return true;
+  if (!navigator.onLine) return true;
+  return error instanceof TypeError;
+}
+
+function isTransientServerHttpStatus(status) {
+  return status === 408 || status === 502 || status === 503 || status === 504;
+}
+
+function markServerOffline() {
+  if (wakeInProgress) return;
+  setServerStatus("offline");
+  scheduleServerStatusPoll();
 }
 
 export function getServerStatus() {
@@ -139,9 +156,11 @@ export async function wakeServer() {
 
 export function startServerStatusMonitor() {
   if (!isApiMode()) {
+    document.documentElement.classList.remove("api-mode");
     setServerStatusVisibility(false);
     return;
   }
+  document.documentElement.classList.add("api-mode");
   setServerStatusVisibility(true);
   refreshServerStatus();
 }
@@ -165,7 +184,8 @@ export function getProbeBuffer() {
   return null;
 }
 
-export async function loadFileViaApi(file) {
+export async function loadFileViaApi(file, options = {}) {
+  const isRetry = options.isRetry === true;
   if (!file.type.startsWith("audio/") && !SUPPORTED_EXTENSIONS.has(state.fileExtension)) {
     renderDecodeError(file, "This file type is not supported yet.");
     return;
@@ -175,6 +195,17 @@ export async function loadFileViaApi(file) {
     return;
   }
 
+  if (isApiMode() && serverStatus === "offline" && !isRetry) {
+    setAppPhase("loaded");
+    setStatus(COPY.serverStatus.waking);
+    setProgress("analyze", 6, "Waking server");
+    const ready = await wakeServer();
+    if (!ready) {
+      renderDecodeError(file, COPY.errors.serverUnavailable, "server");
+      return;
+    }
+  }
+
   setAppPhase("loaded");
   setStatus("Uploading to server for analysis...");
   setProgress("analyze", 12, "Uploading audio");
@@ -182,9 +213,25 @@ export async function loadFileViaApi(file) {
   try {
     const form = new FormData();
     form.append("file", file);
-    const response = await fetchWithTimeout(`${getApiBase()}/api/analyze`, { method: "POST", body: form });
+    const response = await fetchWithTimeout(
+      `${getApiBase()}/api/analyze`,
+      { method: "POST", body: form },
+      API_ANALYZE_TIMEOUT_MS,
+    );
     const payload = await response.json();
     if (!response.ok) {
+      if (isTransientServerHttpStatus(response.status) && !isRetry) {
+        markServerOffline();
+        setStatus(COPY.errors.serverWakeup);
+        setProgress("analyze", 8, "Waking server");
+        const woke = await wakeServer();
+        if (woke) {
+          const retried = await loadFileViaApi(file, { isRetry: true });
+          if (retried === true) return;
+        }
+        renderDecodeError(file, COPY.errors.serverUnavailable, "server");
+        return;
+      }
       renderDecodeError(file, payload.error || "Server analysis failed.");
       return;
     }
@@ -221,10 +268,26 @@ export async function loadFileViaApi(file) {
     els.seekSlider.disabled = false;
     els.resetButton.disabled = false;
     els.emptyWave.classList.add("hidden");
+    if (isApiMode()) {
+      setServerStatus("online");
+      scheduleServerStatusPoll();
+    }
+    return true;
   } catch (error) {
     console.error(error);
-    const serverError = isFetchTimeoutError(error) || !navigator.onLine;
+    const serverError = isServerReachabilityError(error);
+    if (serverError) markServerOffline();
+    if (serverError && !isRetry) {
+      setStatus(COPY.errors.serverWakeup);
+      setProgress("analyze", 8, "Waking server");
+      const woke = await wakeServer();
+      if (woke) {
+        const retried = await loadFileViaApi(file, { isRetry: true });
+        if (retried === true) return;
+      }
+    }
     renderDecodeError(file, apiFetchErrorMessage(error), serverError ? "server" : "decode");
+    return false;
   }
 }
 

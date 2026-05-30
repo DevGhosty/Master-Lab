@@ -198,7 +198,7 @@ input:focus-visible {
 }
 
 .server-status-bar {
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
@@ -206,6 +206,10 @@ input:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--panel-3);
+}
+
+html.api-mode .server-status-bar {
+  display: flex;
 }
 
 .server-status-bar-main {
