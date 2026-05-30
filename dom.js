@@ -23,6 +23,7 @@ export const els = {
   processingModeBadge: document.querySelector("#processingModeBadge"),
   serverStatus: document.querySelector("#serverStatus"),
   serverStatusDot: document.querySelector("#serverStatusDot"),
+  serverStatusTitle: document.querySelector("#serverStatusTitle"),
   serverStatusText: document.querySelector("#serverStatusText"),
   wakeServerButton: document.querySelector("#wakeServerButton"),
   uploadPrivacyNote: document.querySelector("#uploadPrivacyNote"),
@@ -139,6 +140,17 @@ export function updateServerStatusUI(status, detail = "") {
     waking: detail || COPY.serverStatus.waking,
     unknown: COPY.serverStatus.checking,
   };
+  const titles = {
+    checking: COPY.serverStatus.titleChecking,
+    online: COPY.serverStatus.titleOnline,
+    offline: COPY.serverStatus.titleOffline,
+    waking: COPY.serverStatus.titleWaking,
+    unknown: COPY.serverStatus.titleChecking,
+  };
+
+  if (els.serverStatusTitle) {
+    els.serverStatusTitle.textContent = titles[status] || titles.unknown;
+  }
   els.serverStatusText.textContent = labels[status] || labels.unknown;
 
   if (els.wakeServerButton) {

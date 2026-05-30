@@ -54,6 +54,10 @@ export const COPY = {
     waking: "Waking server…",
     wakeButton: "Wake server",
     wakeHint: "Free hosting sleeps when idle. Waking takes 30–60 seconds.",
+    titleChecking: "Checking mastering server",
+    titleOnline: "Mastering server is ready",
+    titleOffline: "Mastering server is asleep",
+    titleWaking: "Waking mastering server",
   },
   export: {
     pending: "Run a master to prepare free downloads.",

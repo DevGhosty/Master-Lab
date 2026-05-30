@@ -21,20 +21,6 @@
             </div>
             <div class="topbar-badges">
               <span class="mode-pill" id="processingModeBadge" aria-label="Processing mode">Processing</span>
-              <div
-                class="server-status"
-                id="serverStatus"
-                hidden
-                role="status"
-                aria-live="polite"
-                aria-label="Mastering server status"
-              >
-                <span class="server-status-dot" id="serverStatusDot" aria-hidden="true"></span>
-                <span class="server-status-text" id="serverStatusText">Checking server…</span>
-                <button type="button" class="server-wake-button" id="wakeServerButton" hidden>
-                  Wake server
-                </button>
-              </div>
             </div>
           </div>
           <div class="topbar-status">
@@ -69,6 +55,25 @@
                 <h2>Upload audio</h2>
                 <p id="uploadPrivacyNote">Processing mode loads when the app starts.</p>
               </div>
+            </div>
+            <div
+              class="server-status-bar"
+              id="serverStatus"
+              hidden
+              role="status"
+              aria-live="polite"
+              aria-label="Mastering server status"
+            >
+              <div class="server-status-bar-main">
+                <span class="server-status-dot" id="serverStatusDot" aria-hidden="true"></span>
+                <div class="server-status-copy">
+                  <strong id="serverStatusTitle">Server status</strong>
+                  <span id="serverStatusText">Checking server…</span>
+                </div>
+              </div>
+              <button type="button" class="server-wake-button" id="wakeServerButton" hidden>
+                Wake server
+              </button>
             </div>
             <label class="dropzone is-empty" id="dropzone">
               <input id="fileInput" type="file" accept="audio/*" aria-describedby="uploadPrivacyNote" />
