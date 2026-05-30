@@ -116,8 +116,22 @@
             </div>
             <div class="readiness-badge" id="readinessBadge" role="status">Waiting for file</div>
             <p class="helper-text readiness-next" id="readinessNextStep" hidden></p>
+            <div class="source-verdict hidden" id="sourceVerdict" role="status">
+              <span class="source-verdict-label" id="sourceVerdictLabel"></span>
+              <p class="source-verdict-summary" id="sourceVerdictSummary"></p>
+            </div>
+            <div class="preset-recommendation hidden" id="presetRecommendation">
+              <p class="preset-recommendation-text" id="presetRecommendationText"></p>
+              <button class="secondary-button preset-recommendation-select" type="button" id="presetRecommendationSelect">
+                Use recommendation
+              </button>
+            </div>
+            <p class="helper-text metering-disclaimer hidden" id="meteringDisclaimer"></p>
             <p class="helper-text" id="analysisGuidance">Technical details from your file appear below.</p>
-            <dl class="analysis-grid" id="analysisGrid"></dl>
+            <details class="analysis-details" id="analysisDetails">
+              <summary>Show technical measurements</summary>
+              <dl class="analysis-grid" id="analysisGrid"></dl>
+            </details>
             <div class="warning-list" id="warningList" aria-live="polite"></div>
           </section>
 

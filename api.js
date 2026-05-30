@@ -413,6 +413,15 @@ export async function runMasteringViaApi() {
     form.append("warmth", String(controls.warmth));
     form.append("air", String(controls.air));
     form.append("trimSilence", controls.trimSilence ? "true" : "false");
+    if (Number.isFinite(controls.targetLoudness)) {
+      form.append("targetLoudness", String(controls.targetLoudness));
+    }
+    if (Number.isFinite(controls.ceilingDb)) {
+      form.append("ceilingDb", String(controls.ceilingDb));
+    }
+    if (Number.isFinite(state.analysis?.loudnessDb)) {
+      form.append("sourceLoudnessDb", String(state.analysis.loudnessDb));
+    }
 
     const masterPostStartedAt = Date.now();
     // #region agent log

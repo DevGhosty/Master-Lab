@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { hasAudibleSignal } from "./analysis.js";
+import { hasAudibleSignal, getSourceVerdict, recommendPreset } from "./analysis.js";
 import { COPY, isApiMode } from "./constants.js";
 import { PRESETS, formatPresetGuidance } from "./presets.js";
 import { getAdaptiveTarget, getAdaptiveCeiling } from "./mastering.js";
@@ -35,6 +35,15 @@ export const els = {
   analysisCard: document.querySelector("#analysisCard"),
   readinessBadge: document.querySelector("#readinessBadge"),
   readinessCopy: document.querySelector("#readinessCopy"),
+  sourceVerdict: document.querySelector("#sourceVerdict"),
+  sourceVerdictLabel: document.querySelector("#sourceVerdictLabel"),
+  sourceVerdictSummary: document.querySelector("#sourceVerdictSummary"),
+  presetRecommendation: document.querySelector("#presetRecommendation"),
+  presetRecommendationText: document.querySelector("#presetRecommendationText"),
+  presetRecommendationSelect: document.querySelector("#presetRecommendationSelect"),
+  meteringDisclaimer: document.querySelector("#meteringDisclaimer"),
+  analysisGuidance: document.querySelector("#analysisGuidance"),
+  analysisDetails: document.querySelector("#analysisDetails"),
   analysisGrid: document.querySelector("#analysisGrid"),
   warningList: document.querySelector("#warningList"),
   presetDescription: document.querySelector("#presetDescription"),
@@ -270,6 +279,7 @@ export function showAnalysisResults() {
 export function resetAnalysisPanel() {
   els.analysisCard.classList.add("hidden");
   els.analysisCard.classList.remove("is-ready");
+  hideChecklistExtras();
   setAnalysisPlaceholderVisible(true, "empty");
 }
 
@@ -491,6 +501,7 @@ export function readControls() {
     bass: preset.bass,
     ceilingDb: getAdaptiveCeiling(preset),
     targetLoudness: getAdaptiveTarget(preset),
+    sourceLoudnessDb: state.analysis?.loudnessDb ?? null,
     trimSilence: els.trimSilenceToggle.checked,
   };
 }
@@ -517,14 +528,51 @@ export function selectPreset(key, applyDefaults = true) {
   }
 }
 
-function appendMetric(container, label, value) {
+function appendMetric(container, label, value, hint = "") {
   const row = document.createElement("div");
   const term = document.createElement("dt");
   const description = document.createElement("dd");
   term.textContent = label;
+  if (hint) term.title = hint;
   description.textContent = value;
   row.append(term, description);
   container.appendChild(row);
+}
+
+function renderPresetRecommendation(recommendation) {
+  if (!els.presetRecommendation || !recommendation) return;
+  const preset = PRESETS[recommendation.presetKey];
+  const presetLabel = preset?.label || recommendation.presetKey;
+  els.presetRecommendation.classList.remove("hidden");
+  els.presetRecommendationText.textContent = `${COPY.presetRecommendation.reasonPrefix} ${presetLabel}. ${recommendation.reason}`;
+  if (els.presetRecommendationSelect) {
+    els.presetRecommendationSelect.textContent = COPY.presetRecommendation.select;
+    els.presetRecommendationSelect.dataset.preset = recommendation.presetKey;
+  }
+  state.recommendedPresetKey = recommendation.presetKey;
+  highlightRecommendedPreset(recommendation.presetKey);
+}
+
+function highlightRecommendedPreset(presetKey) {
+  els.presetButtons.forEach((button) => {
+    button.classList.toggle("is-recommended", button.dataset.preset === presetKey);
+  });
+}
+
+function renderSourceVerdict(verdict) {
+  if (!els.sourceVerdict || !verdict) return;
+  els.sourceVerdict.classList.remove("hidden");
+  els.sourceVerdict.className = `source-verdict source-verdict-${verdict.level}`;
+  els.sourceVerdictLabel.textContent = verdict.label;
+  els.sourceVerdictSummary.textContent = verdict.summary;
+}
+
+function hideChecklistExtras() {
+  els.sourceVerdict?.classList.add("hidden");
+  els.presetRecommendation?.classList.add("hidden");
+  els.meteringDisclaimer?.classList.add("hidden");
+  state.recommendedPresetKey = null;
+  els.presetButtons.forEach((button) => button.classList.remove("is-recommended"));
 }
 
 function appendWarning(container, warning) {
@@ -539,33 +587,65 @@ function appendWarning(container, warning) {
 }
 
 export function renderAnalysis(file, buffer, analysis, warnings, readiness) {
+  const verdict = getSourceVerdict(warnings, analysis, file);
+  const recommendation = recommendPreset(analysis, warnings, file);
   const typeLabel = file.type || state.fileExtension.toUpperCase() || "Not available";
+  const clipLabel =
+    analysis.clippingSamples > 0
+      ? `Possible clipping detected ${((analysis.clippingRatio || 0) * 100).toFixed(2)}%`
+      : "No clipping detected";
+  const stereoLabel = analysis.serverAnalysis
+    ? "Not measured (server mode)"
+    : Number.isFinite(analysis.stereoCorrelation)
+      ? analysis.stereoCorrelation.toFixed(2)
+      : "Not available";
+
   const rows = [
-    ["File name", file.name],
-    ["File type", typeLabel],
-    ["File size", formatBytes(file.size)],
-    ["Duration", formatTime(buffer.duration)],
-    ["Sample rate", `${buffer.sampleRate.toLocaleString()} Hz`],
-    ["Channels", `${buffer.numberOfChannels} (${buffer.numberOfChannels === 1 ? "mono" : "stereo"})`],
-    ["Bit depth", state.bitDepth ? `${state.bitDepth}-bit` : "Not available"],
-    ["Peak level", formatDbValue(analysis.peakDb)],
-    ["True peak", formatDbtp(analysis.truePeakDb)],
-    ["Integrated loudness", formatLufs(analysis.loudnessDb)],
-    ["Crest factor", formatDbValue(analysis.crestDb)],
-    ["Stereo correlation", Number.isFinite(analysis.stereoCorrelation) ? analysis.stereoCorrelation.toFixed(2) : "Not available"],
-    ["DC offset", formatDbValue(analysis.dcOffsetDb)],
-    ["Silence", `${formatTime(analysis.leadingSilenceSeconds)} lead / ${formatTime(analysis.trailingSilenceSeconds)} tail`],
-    ["Clipping status", analysis.clippingSamples > 0 ? "Possible clipping detected" : "No clipping detected"],
+    ["File name", file.name, ""],
+    ["File type", typeLabel, ""],
+    ["File size", formatBytes(file.size), ""],
+    ["Duration", formatTime(buffer.duration), ""],
+    ["Sample rate", `${buffer.sampleRate.toLocaleString()} Hz`, ""],
+    ["Channels", `${buffer.numberOfChannels} (${buffer.numberOfChannels === 1 ? "mono" : "stereo"})`, ""],
+    ["Bit depth", state.bitDepth ? `${state.bitDepth}-bit` : "Not available", ""],
+    ["Peak level", formatDbValue(analysis.peakDb), ""],
+    ["True peak", formatDbtp(analysis.truePeakDb), COPY.metricHints.truePeak],
+    ["Integrated loudness", formatLufs(analysis.loudnessDb), COPY.metricHints.loudness],
+    ["Crest factor", formatDbValue(analysis.crestDb), COPY.metricHints.crest],
+    ["Stereo correlation", stereoLabel, COPY.metricHints.stereoCorrelation],
+    ["DC offset", formatDbValue(analysis.dcOffsetDb), ""],
+    ["Silence", `${formatTime(analysis.leadingSilenceSeconds)} lead / ${formatTime(analysis.trailingSilenceSeconds)} tail`, ""],
+    ["Clipping status", clipLabel, ""],
   ];
 
+  if (!analysis.serverAnalysis) {
+    rows.push(
+      ["Low-end balance", formatDbValue(analysis.lowRatioDb), ""],
+      ["High-end balance", formatDbValue(analysis.highRatioDb), ""],
+    );
+  }
+
   showAnalysisResults();
-  els.analysisCard.classList.toggle("is-ready", readiness.level === "good");
+  els.analysisCard.classList.toggle("is-ready", verdict.level === "good");
   setMasteringControlsLocked(!hasAudibleSignal(analysis));
   els.readinessBadge.textContent = readiness.status;
   els.readinessBadge.className = `readiness-badge ${readiness.level}`;
   els.readinessCopy.textContent = readiness.copy;
+
+  renderSourceVerdict(verdict);
+  renderPresetRecommendation(recommendation);
+  if (els.meteringDisclaimer) {
+    els.meteringDisclaimer.textContent = COPY.meteringDisclaimer;
+    els.meteringDisclaimer.classList.remove("hidden");
+  }
+  if (els.analysisGuidance) {
+    els.analysisGuidance.textContent = hasAudibleSignal(analysis)
+      ? `${COPY.preserveLevelNote} Expand technical measurements below for full metrics.`
+      : "Upload a file with audible signal to continue.";
+  }
+
   clearChildren(els.analysisGrid);
-  rows.forEach(([label, value]) => appendMetric(els.analysisGrid, label, value));
+  rows.forEach(([label, value, hint]) => appendMetric(els.analysisGrid, label, value, hint));
   clearChildren(els.warningList);
   if (warnings.length) {
     warnings.forEach((warning) => appendWarning(els.warningList, warning));
@@ -580,6 +660,7 @@ export function renderAnalysis(file, buffer, analysis, warnings, readiness) {
   state.lastReadiness = readiness;
   updateReadinessNextStep(readiness);
   updateWorkflowGuidance(readiness);
+  updateMasterButtonHint();
 }
 
 export function renderDecodeError(file, message, kind = "decode") {
@@ -590,6 +671,7 @@ export function renderDecodeError(file, message, kind = "decode") {
   setProgress("analyze", 0, isServer ? "Server unavailable" : "Audio decoding failed");
   showAnalysisResults();
   els.analysisCard.classList.remove("is-ready");
+  hideChecklistExtras();
   els.readinessBadge.textContent = isServer ? "Server unavailable" : "Major issues detected";
   els.readinessBadge.className = "readiness-badge major";
   els.readinessCopy.textContent = isServer

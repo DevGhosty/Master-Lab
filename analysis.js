@@ -388,11 +388,20 @@ function readAscii(view, offset, length) {
 function warningFromCopy(copyKey, level, extraText = "") {
   const copy = COPY.warnings[copyKey];
   const tryLine = copy.try ? ` ${copy.try}` : "";
+  const whyLine = copy.why ? ` Why: ${copy.why}` : "";
   return {
     level,
+    severity: level,
     title: copy.title,
-    text: extraText ? `${copy.text} ${extraText}` : `${copy.text}${tryLine}`,
+    text: extraText ? `${copy.text} ${extraText}${whyLine}` : `${copy.text}${tryLine}${whyLine}`,
+    why: copy.why || "",
+    try: copy.try || "",
   };
+}
+
+function formatClipRatioText(analysis) {
+  const pct = (analysis.clippingRatio * 100).toFixed(2);
+  return `(${pct}% of samples near full scale)`;
 }
 
 export function buildWarnings(file, buffer, analysis) {
@@ -404,22 +413,28 @@ export function buildWarnings(file, buffer, analysis) {
   if (!hasAudibleSignal(analysis)) {
     warnings.push(warningFromCopy("silent", "major"));
   }
-  if (analysis.loudnessDb < -32) {
+  if (Number.isFinite(analysis.loudnessDb) && analysis.loudnessDb < -26) {
     warnings.push(warningFromCopy("quiet", "minor"));
   }
-  if (analysis.loudnessDb > -10 || analysis.peakDb > -0.5) {
+  if (
+    Number.isFinite(analysis.loudnessDb) &&
+    analysis.loudnessDb > -10 &&
+    Number.isFinite(analysis.truePeakDb) &&
+    analysis.truePeakDb > -1
+  ) {
     warnings.push(warningFromCopy("loud", "minor"));
   }
-  if (analysis.truePeakDb > -0.2) {
+  if (Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb > -0.2) {
     warnings.push(warningFromCopy("truePeak", "minor"));
   }
   if (analysis.clippingSamples > 0) {
-    warnings.push(warningFromCopy("clipping", analysis.clippingRatio > 0.001 ? "major" : "minor"));
+    const level = analysis.clippingRatio > 0.001 ? "major" : "minor";
+    warnings.push(warningFromCopy("clipping", level, formatClipRatioText(analysis)));
   }
-  if (buffer.numberOfChannels === 1) {
+  if (buffer?.numberOfChannels === 1) {
     warnings.push(warningFromCopy("mono", "minor"));
   }
-  if (buffer.sampleRate < 44100) {
+  if (buffer?.sampleRate && buffer.sampleRate < 44100) {
     warnings.push(warningFromCopy("lowSampleRate", "minor"));
   }
   if (analysis.leadingSilenceSeconds > 3 || analysis.trailingSilenceSeconds > 8) {
@@ -428,29 +443,142 @@ export function buildWarnings(file, buffer, analysis) {
   if (Number.isFinite(analysis.stereoCorrelation) && analysis.stereoCorrelation < -0.2) {
     warnings.push(warningFromCopy("phase", "minor"));
   }
-  if (analysis.crestDb < 6 && analysis.loudnessDb > -12) {
+  if (
+    Number.isFinite(analysis.crestDb) &&
+    analysis.crestDb < 5 &&
+    Number.isFinite(analysis.loudnessDb) &&
+    analysis.loudnessDb > -11
+  ) {
     warnings.push(warningFromCopy("overLimited", "minor"));
   }
 
   return warnings;
 }
 
+export function getSourceVerdict(warnings, analysis, file) {
+  if (!hasAudibleSignal(analysis)) {
+    return {
+      key: "notReady",
+      level: "major",
+      ...COPY.verdict.notReady,
+    };
+  }
+
+  const majorWarnings = warnings.filter((warning) => warning.level === "major");
+  const minorWarnings = warnings.filter((warning) => warning.level === "minor");
+  const hasClippingMajor = majorWarnings.some((warning) => warning.title.includes("clipping"));
+
+  if (majorWarnings.length > 0) {
+    return {
+      key: "potential",
+      level: "minor",
+      label: COPY.verdict.potential.label,
+      summary: hasClippingMajor
+        ? "Clipping was detected. You can master, but a cleaner export will sound better."
+        : COPY.verdict.potential.summary,
+    };
+  }
+
+  const lossless = file && !isLossyFile(file);
+  const lufsInRange =
+    Number.isFinite(analysis.loudnessDb) &&
+    analysis.loudnessDb >= -24 &&
+    analysis.loudnessDb <= -14;
+  const tpSafe = Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb < -1;
+  const crestHealthy = Number.isFinite(analysis.crestDb) && analysis.crestDb >= 8;
+  const noClips = !analysis.clippingSamples;
+
+  if (minorWarnings.length === 0 && lossless && lufsInRange && tpSafe && crestHealthy && noClips) {
+    return {
+      key: "best",
+      level: "good",
+      ...COPY.verdict.best,
+    };
+  }
+
+  if (minorWarnings.length === 0) {
+    return {
+      key: "safe",
+      level: "good",
+      ...COPY.verdict.safe,
+    };
+  }
+
+  return {
+    key: "potential",
+    level: "minor",
+    ...COPY.verdict.potential,
+  };
+}
+
+export function recommendPreset(analysis, warnings, file) {
+  const defaultRec = {
+    presetKey: "streaming",
+    reason: "Good default for most mixes heading to Spotify, Apple Music, or YouTube.",
+  };
+
+  if (!analysis || !hasAudibleSignal(analysis)) return defaultRec;
+
+  const overLimited = warnings.some((warning) => warning.title.includes("over-limited"));
+  const loud = warnings.some((warning) => warning.title.includes("Already very loud"));
+  const quiet = warnings.some((warning) => warning.title.includes("Quiet mix"));
+  const lossy = file && isLossyFile(file);
+  const harshPeaks = Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb > -0.5;
+
+  if (overLimited || loud) {
+    return {
+      presetKey: "balanced",
+      reason: "Your upload is already loud or heavily limited—Balanced adds polish without pushing volume.",
+    };
+  }
+  if (quiet) {
+    return {
+      presetKey: "balanced",
+      reason: "A quieter mix benefits from Balanced's moderate lift before streaming targets.",
+    };
+  }
+  if (lossy && harshPeaks) {
+    return {
+      presetKey: "warm",
+      reason: "Lossy source with hot peaks—Warm smooths harshness without extra brightness.",
+    };
+  }
+
+  const bandsAvailable = !analysis.serverAnalysis && Number.isFinite(analysis.highRatioDb);
+  if (bandsAvailable && analysis.highRatioDb < -22) {
+    return {
+      presetKey: "bright",
+      reason: "The mix sounds dull in the high end—Bright adds clarity and air.",
+    };
+  }
+  if (bandsAvailable && analysis.lowRatioDb < -16) {
+    return {
+      presetKey: "bass",
+      reason: "The low end looks thin—Bass Boost adds weight without muddying the mix.",
+    };
+  }
+
+  return defaultRec;
+}
+
 export function getReadiness(warnings, analysis) {
   const majorWarnings = warnings.filter((w) => w.level === "major");
-  if (majorWarnings.length > 0 || !hasAudibleSignal(analysis)) {
-    if (!hasAudibleSignal(analysis)) {
-      return {
-        status: "Major issues detected",
-        level: "major",
-        copy: "No usable audio was detected. Upload a file with audible signal before mastering.",
-        nextStep: COPY.readiness.majorSilent,
-      };
-    }
+  if (!hasAudibleSignal(analysis)) {
+    return {
+      status: "Major issues detected",
+      level: "major",
+      copy: "No usable audio was detected. Upload a file with audible signal before mastering.",
+      nextStep: COPY.readiness.majorSilent,
+    };
+  }
+  if (majorWarnings.length > 0) {
     const hasClipping = majorWarnings.some((w) => w.title.includes("clipping"));
     return {
       status: "Major issues detected",
       level: "major",
-      copy: "Fix the major issue below for the best result. Mastering stays disabled until the file is usable.",
+      copy: hasClipping
+        ? "Clipping was detected in the source. You can still master, but a cleaner export is recommended."
+        : "A major issue was flagged below. You can try mastering, but fixing the source first is recommended.",
       nextStep: hasClipping ? COPY.readiness.majorClipping : COPY.readiness.majorGeneric,
     };
   }

@@ -1,5 +1,12 @@
 import { state } from "./state.js";
 import { analyzeAudioBuffer, estimateLoudnessDb, estimateTruePeakDb } from "./analysis.js";
+import {
+  computeAdaptiveCeiling,
+  computeAdaptiveTarget,
+  computeFinalizeGainDb,
+  computePreGainDb,
+  isEnhancementOnlyMode,
+} from "./loudnessPolicy.js";
 import { clamp, dbToLinear, linearToDb } from "./utils.js";
 
 function makeWaveShaperCurve(amount) {
@@ -118,27 +125,16 @@ export async function masterBuffer(inputBuffer, controls) {
 
   source.start(0);
   const rendered = await offline.startRendering();
-  return finalizeMaster(rendered, dsp.targetLoudness, dsp.ceilingDb);
+  return finalizeMaster(rendered, dsp.targetLoudness, dsp.ceilingDb, sourceAnalysis.loudnessDb);
 }
 
-// Adaptive target/ceiling: pull back loudness goals when the source is already
-// hot (loud or near 0 dBTP) or very dynamic so we never push into distortion.
 export function getAdaptiveTarget(preset) {
   if (!state.analysis) return preset.targetLoudness;
-  if (state.analysis.loudnessDb > -10 || state.analysis.truePeakDb > -0.5) {
-    return Math.min(-12, state.analysis.loudnessDb);
-  }
-  if (state.analysis.crestDb > 15 && state.selectedPreset === "streaming") {
-    return -16;
-  }
-  return preset.targetLoudness;
+  return computeAdaptiveTarget(preset, state.analysis);
 }
 
 export function getAdaptiveCeiling(preset) {
-  if (state.analysis && (state.analysis.loudnessDb > -10 || state.analysis.truePeakDb > -0.5)) {
-    return -2;
-  }
-  return preset.ceilingDb;
+  return computeAdaptiveCeiling(preset, state.analysis);
 }
 
 function buildMasteringSettings(analysis, controls) {
@@ -148,31 +144,38 @@ function buildMasteringSettings(analysis, controls) {
   const lowCorrection = clamp((-12 - analysis.lowRatioDb) * 0.08, -0.7, 0.7);
   const highCorrection = clamp((-20 - analysis.highRatioDb) * -0.07, -0.7, 0.8);
   const loudnessGap = controls.targetLoudness - analysis.loudnessDb;
+  const enhancementOnly = isEnhancementOnlyMode(analysis.loudnessDb, controls.targetLoudness);
+  const mudIntensity = enhancementOnly ? intensity * 0.55 : intensity;
 
   return {
     targetLoudness: controls.targetLoudness,
     ceilingDb: controls.ceilingDb,
     highPassHz: analysis.lowRatioDb > -7 ? 32 : 25,
     lowShelfDb: clamp((warmth - 0.5) * 2 + lowCorrection + controls.bass * 2.1, -1.5, 1.6),
-    mudCutDb: -clamp(0.12 + intensity * 0.72 + Math.max(0, analysis.mudRatioDb + 7) * 0.06, 0.1, 1.05),
+    mudCutDb: -clamp(0.12 + mudIntensity * 0.72 + Math.max(0, analysis.mudRatioDb + 7) * 0.06, 0.1, enhancementOnly ? 0.65 : 1.05),
     airDb: clamp((air - 0.5) * 2.2 + highCorrection, -1, 1.25),
-    preGainDb: clamp(loudnessGap * 0.3, -2, 3),
+    preGainDb: computePreGainDb(loudnessGap),
     saturationDrive: 1 + intensity * 0.18,
     saturationTrimDb: -0.05 - intensity * 0.12,
     saturationWet: clamp(intensity * 0.08, 0, 0.08),
-    compressorThresholdDb: clamp(analysis.rmsDb + 7 - intensity * 3, -21, -12),
-    compressorRatio: 1.28 + intensity * 0.6,
+    compressorThresholdDb: clamp(analysis.rmsDb + 7 - intensity * (enhancementOnly ? 2 : 3), -21, -12),
+    compressorRatio: enhancementOnly ? 1.28 + intensity * 0.5 : 1.28 + intensity * 0.6,
     attackSeconds: 0.026,
     releaseSeconds: 0.15 + clamp((analysis.crestDb - 11) * 0.006, -0.02, 0.05),
     makeupGainDb: clamp(0.55 + intensity * 1.15 + Math.max(0, loudnessGap) * 0.08, 0.15, 2.6),
   };
 }
 
-function finalizeMaster(buffer, targetLoudness, ceilingDb) {
+function finalizeMaster(buffer, targetLoudness, ceilingDb, sourceLoudnessDb) {
   const loudness = estimateLoudnessDb(buffer);
   const truePeakDb = estimateTruePeakDb(buffer);
-  const peakRoomDb = ceilingDb - truePeakDb;
-  const desiredGainDb = clamp(Math.min(targetLoudness - loudness, peakRoomDb), -4.5, 5);
+  const desiredGainDb = computeFinalizeGainDb({
+    loudnessDb: loudness,
+    targetLoudness,
+    ceilingDb,
+    truePeakDb,
+    sourceLoudnessDb,
+  });
   const gained = applyGain(buffer, dbToLinear(desiredGainDb));
   const limited = lookaheadLimit(gained, ceilingDb, 5, 110);
   const validated = normalizeToCeiling(limited, ceilingDb);

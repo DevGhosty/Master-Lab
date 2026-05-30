@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JOB_TTL_MS, MAX_CHANNELS, MAX_DURATION_SECONDS } from "./constants.js";
-import { buildMasterFilter } from "./presets.js";
+import { buildMasterFilter, resolveMasteringTargets } from "./presets.js";
 import { masterToFiles, measureIntegratedLoudness, probeAudioFile, removeDir } from "./ffmpeg.js";
 
 function validateProbe(probe) {
@@ -53,15 +53,43 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     job.progress = 15;
     job.message = "Measuring loudness";
     const loudness = await measureIntegratedLoudness(inputPath);
+    const sourceLufs = Number.isFinite(Number(controls.sourceLoudnessDb))
+      ? Number(controls.sourceLoudnessDb)
+      : loudness.input_i;
+    const targets = resolveMasteringTargets(preset, controls, {
+      loudnessDb: sourceLufs,
+      truePeakDb: loudness.input_tp,
+    });
     job.progress = 20;
     job.message = "Applying mastering preset";
-    const filter = buildMasterFilter(preset, controls, { measuredLufs: loudness.input_i });
+    const filter = buildMasterFilter(
+      preset,
+      {
+        ...controls,
+        targetLoudness: targets.effectiveTargetLufs,
+        ceilingDb: targets.effectiveCeilingDb,
+      },
+      {
+        measuredLufs: targets.measuredLufs,
+        effectiveTargetLufs: targets.effectiveTargetLufs,
+        enhancementOnly: targets.enhancementOnly,
+      },
+    );
     job.progress = 25;
     job.message = "Rendering master and exports";
-    const result = await masterToFiles(inputPath, job.dir, filter, ({ progress, message }) => {
-      job.progress = progress;
-      job.message = message;
-    });
+    const result = await masterToFiles(
+      inputPath,
+      job.dir,
+      filter,
+      ({ progress, message }) => {
+        job.progress = progress;
+        job.message = message;
+      },
+      {
+        sourceLufs,
+        ceilingDb: targets.effectiveCeilingDb,
+      },
+    );
     job.progress = 88;
     job.message = "Preparing downloads";
     job.files = result.files;
@@ -70,6 +98,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
       limiterReductionDb: 0,
       preset,
       serverMaster: true,
+      preserveLevel: true,
       waveformPeaks: result.waveformPeaks || null,
     };
     job.status = "done";

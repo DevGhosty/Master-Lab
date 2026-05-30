@@ -14,7 +14,7 @@ import {
   VALID_PRESETS,
 } from "./constants.js";
 import { analyzeAudioFile, masterToFiles, measureIntegratedLoudness, removeDir } from "./ffmpeg.js";
-import { buildMasterFilter } from "./presets.js";
+import { buildMasterFilter, resolveMasteringTargets } from "./presets.js";
 import { createJob, getJob, runMasterJob, scheduleJobCleanup } from "./jobs.js";
 import {
   createUploadSession,
@@ -158,6 +158,9 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
     warmth: Number(req.body?.warmth),
     air: Number(req.body?.air),
     trimSilence: req.body?.trimSilence === "true" || req.body?.trimSilence === true,
+    targetLoudness: Number(req.body?.targetLoudness),
+    ceilingDb: Number(req.body?.ceilingDb),
+    sourceLoudnessDb: Number(req.body?.sourceLoudnessDb),
   };
   const workDir = path.join(os.tmpdir(), "master-lab", randomUUID());
   try {
@@ -176,8 +179,30 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
     }
     await fs.mkdir(workDir, { recursive: true });
     const loudness = await measureIntegratedLoudness(uploadPath);
-    const filter = buildMasterFilter(preset, controls, { measuredLufs: loudness.input_i });
-    const result = await masterToFiles(uploadPath, workDir, filter);
+    const sourceLufs = Number.isFinite(Number(controls.sourceLoudnessDb))
+      ? Number(controls.sourceLoudnessDb)
+      : loudness.input_i;
+    const targets = resolveMasteringTargets(preset, controls, {
+      loudnessDb: sourceLufs,
+      truePeakDb: loudness.input_tp,
+    });
+    const filter = buildMasterFilter(
+      preset,
+      {
+        ...controls,
+        targetLoudness: targets.effectiveTargetLufs,
+        ceilingDb: targets.effectiveCeilingDb,
+      },
+      {
+        measuredLufs: targets.measuredLufs,
+        effectiveTargetLufs: targets.effectiveTargetLufs,
+        enhancementOnly: targets.enhancementOnly,
+      },
+    );
+    const result = await masterToFiles(uploadPath, workDir, filter, null, {
+      sourceLufs,
+      ceilingDb: targets.effectiveCeilingDb,
+    });
     const meta = {
       masteredAnalysis: result.masteredAnalysis,
       originalAnalysis: analyzed.analysis,
@@ -215,6 +240,9 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
     warmth: Number(req.body?.warmth),
     air: Number(req.body?.air),
     trimSilence: req.body?.trimSilence === "true" || req.body?.trimSilence === true,
+    targetLoudness: Number(req.body?.targetLoudness),
+    ceilingDb: Number(req.body?.ceilingDb),
+    sourceLoudnessDb: Number(req.body?.sourceLoudnessDb),
   };
   try {
     if (!uploadPath && sessionId) {

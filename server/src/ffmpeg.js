@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { computePostTrimGainDb } from "./loudnessPolicy.js";
 
 const FFMPEG_GLOBAL = ["-hide_banner", "-threads", "0"];
 
@@ -165,14 +166,15 @@ function buildAnalysisFromMetrics(metrics, clip, silence, channels) {
     truePeakDb: Number.isFinite(truePeakDb) ? truePeakDb : null,
     loudnessDb: Number.isFinite(loudnessDb) ? loudnessDb : null,
     crestDb: safePeakDb != null && safeRmsDb != null ? safePeakDb - safeRmsDb : null,
-    lowRatioDb: -12,
-    mudRatioDb: -8,
-    midRatioDb: -10,
-    presenceRatioDb: -14,
-    highRatioDb: -18,
+    lowRatioDb: null,
+    mudRatioDb: null,
+    midRatioDb: null,
+    presenceRatioDb: null,
+    highRatioDb: null,
     dcOffset: 0,
     dcOffsetDb: -80,
-    stereoCorrelation: channels >= 2 ? 0.85 : null,
+    stereoCorrelation: null,
+    serverAnalysis: true,
     leadingSilenceSeconds: silence.leading,
     trailingSilenceSeconds: silence.trailing,
     clippingSamples: clip.clippingSamples,
@@ -389,7 +391,38 @@ export async function extractWaveformPeaks(inputPath, width = 800) {
   return readPeaksFile(peaksRaw, width);
 }
 
-export async function masterToFiles(inputPath, workDir, filterChain, onProgress) {
+export async function applyGainToFile(filePath, gainDb) {
+  if (gainDb <= 0.01) return;
+  const ext = path.extname(filePath);
+  const tempPath = `${filePath}.gain${ext}`;
+  const { code, stderr } = await runCommand("ffmpeg", [
+    ...FFMPEG_GLOBAL,
+    "-y",
+    "-i",
+    filePath,
+    "-af",
+    `volume=${gainDb.toFixed(2)}dB`,
+    tempPath,
+  ]);
+  if (code !== 0) throw new Error(stderr || `Gain apply failed for ${path.basename(filePath)}`);
+  await fs.rename(tempPath, filePath);
+}
+
+async function applyPreserveTrim(files, sourceLufs, masteredAnalysis, ceilingDb) {
+  const trimGain = computePostTrimGainDb(
+    sourceLufs,
+    masteredAnalysis.loudnessDb,
+    masteredAnalysis.truePeakDb,
+    ceilingDb,
+  );
+  if (trimGain <= 0.01) return trimGain;
+  for (const filePath of Object.values(files)) {
+    await applyGainToFile(filePath, trimGain);
+  }
+  return trimGain;
+}
+
+export async function masterToFiles(inputPath, workDir, filterChain, onProgress, options = {}) {
   const report = (progress, message) => {
     if (typeof onProgress === "function") onProgress({ progress, message });
   };
@@ -451,19 +484,25 @@ export async function masterToFiles(inputPath, workDir, filterChain, onProgress)
   if (code !== 0) throw new Error(stderr || "Mastering failed");
 
   report(86, "Analyzing master preview");
-  const [masteredAnalysis, waveformPeaks] = await Promise.all([
-    analyzeMetricsOnly(previewPath),
-    readPeaksFile(peaksRaw),
-  ]);
+  let masteredAnalysis = await analyzeMetricsOnly(previewPath);
+  const files = {
+    preview: previewPath,
+    wav32: wav32Path,
+    wav24: wav24Path,
+    wav16: wav16Path,
+    mp3: mp3Path,
+  };
+
+  if (options.sourceLufs != null && Number.isFinite(options.sourceLufs)) {
+    report(88, "Matching source loudness");
+    await applyPreserveTrim(files, options.sourceLufs, masteredAnalysis, options.ceilingDb ?? -1);
+    masteredAnalysis = await analyzeMetricsOnly(previewPath);
+  }
+
+  const waveformPeaks = await readPeaksFile(peaksRaw);
 
   return {
-    files: {
-      preview: previewPath,
-      wav32: wav32Path,
-      wav24: wav24Path,
-      wav16: wav16Path,
-      mp3: mp3Path,
-    },
+    files,
     masteredAnalysis,
     waveformPeaks,
   };

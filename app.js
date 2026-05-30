@@ -370,6 +370,12 @@ function initApp() {
       wakeServer();
     });
   }
+  if (els.presetRecommendationSelect) {
+    els.presetRecommendationSelect.addEventListener("click", () => {
+      const presetKey = els.presetRecommendationSelect.dataset.preset || state.recommendedPresetKey;
+      if (presetKey) selectPreset(presetKey);
+    });
+  }
   startServerStatusMonitor();
 }
 

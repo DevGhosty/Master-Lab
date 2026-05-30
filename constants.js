@@ -111,8 +111,42 @@ export const COPY = {
     minorNext: (count) =>
       `${count} note${count === 1 ? "" : "s"} below—you can still master. Review them, then choose a goal and click Master file.`,
     majorSilent: "Upload a file with audible audio before mastering.",
-    majorClipping: "Reduce clipping in your mix or re-export with more headroom, then upload again for best results.",
-    majorGeneric: "Address the major issue below, or try a cleaner WAV/FLAC export before mastering.",
+    majorClipping:
+      "Clipping was detected in the source. Mastering can proceed, but re-exporting with more headroom will sound cleaner.",
+    majorGeneric:
+      "A major issue was flagged below. You can try mastering, but fixing the source first is recommended.",
+  },
+  verdict: {
+    best: {
+      label: "Best source quality",
+      summary: "Lossless file with healthy levels and dynamics—ideal starting point for mastering.",
+    },
+    safe: {
+      label: "Safe to master",
+      summary: "No major issues detected. Pick a goal and master when ready.",
+    },
+    potential: {
+      label: "Potential issue",
+      summary: "One or more notes below are worth reviewing before you master.",
+    },
+    notReady: {
+      label: "Not ready",
+      summary: "No usable audio detected. Upload a file with audible signal.",
+    },
+  },
+  meteringDisclaimer:
+    "LUFS and true peak are estimates for pre-master guidance—not certified broadcast metering.",
+  preserveLevelNote:
+    "Preserves your upload's loudness when it's already at or above the preset target. This is estimated metering, not broadcast certification.",
+  metricHints: {
+    crest: "8–14 dB typical for dynamic mixes",
+    loudness: "About −24 to −14 LUFS is common for finished mixes",
+    truePeak: "Keep below −1 dBTP for streaming headroom",
+    stereoCorrelation: "Near +1.0 is strong correlation; negative values may cancel in mono",
+  },
+  presetRecommendation: {
+    select: "Use recommendation",
+    reasonPrefix: "Recommended preset:",
   },
   warnings: {
     lossy: {
@@ -126,23 +160,27 @@ export const COPY = {
       try: "Try this: export again with audible audio and re-upload.",
     },
     quiet: {
-      title: "Very quiet mix",
-      text: "Mastering will raise the level, but background noise and hiss may become more obvious.",
-      try: "Try this: turn up your mix in the DAW before export, leaving a few dB of peak headroom.",
+      title: "Quiet mix",
+      text: "Your mix is quieter than typical finished tracks. Master Lab can raise the level, but very quiet exports may need gain in your DAW first.",
+      why: "Mastering adds polish and moderate level—not a substitute for a well-gained mix.",
+      try: "Try this: if peaks have headroom, turn up your mix in the DAW before export; if levels look fine, you can still master.",
     },
     loud: {
       title: "Already very loud",
-      text: "There is little room to push louder without extra distortion. The master will stay conservative.",
-      try: "Try this: use Loud only if you need more level; otherwise Balanced or Streaming Ready is safer.",
+      text: "This upload is already loud with little headroom. Master Lab will preserve level and focus on tone, not pushing louder.",
+      why: "Hot sources cannot be turned down to streaming targets without losing impact—you chose preserve-level mastering.",
+      try: "Try this: use Balanced or Streaming Ready; avoid Loud unless you need more limiting.",
     },
     truePeak: {
       title: "True peak near clipping",
       text: "Peaks are close to 0 dBTP. Limiting will leave extra headroom for streaming codecs.",
+      why: "Streaming encoders need headroom—peaks near 0 dBTP can clip after conversion.",
       try: "Try this: lower your limiter ceiling in the mix by about 1 dB before re-exporting.",
     },
     clipping: {
       title: "Possible clipping in the source",
       text: "Distortion in the upload may sound harsher after limiting. Master Lab cannot remove clipped samples.",
+      why: "Clipped samples are permanently distorted—limiting only reshapes what is already there.",
       try: "Try this: re-export with peaks around -6 dBFS and no clip lights on your meters.",
     },
     mono: {
@@ -167,7 +205,8 @@ export const COPY = {
     },
     overLimited: {
       title: "Likely over-limited source",
-      text: "The mix has very little dynamic range already. Heavy limiting will not add much loudness.",
+      text: "The mix has very little dynamic range already. Mastering adds polish, not volume.",
+      why: "Heavy limiting before mastering leaves little room for further loudness work.",
       try: "Try this: choose Balanced or Streaming Ready instead of Loud.",
     },
     none: {
@@ -187,7 +226,7 @@ export const COPY = {
   controls: {
     noFile: "Upload a track in step 1 to enable mastering.",
     analyzing: "Wait for the original audio check to finish.",
-    majorIssues: "Mastering is blocked until the major issue above is resolved.",
+    majorIssues: "Mastering is blocked until the file has audible audio.",
     ready: "When you are happy with your goal and fine tune, click Master file.",
     playDisabled: "Press play after your file loads and the waveform appears.",
     tabsLocked: "Unavailable until mastering finishes—then compare before and after.",
