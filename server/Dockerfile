@@ -15,6 +15,9 @@ ENV HOME=/home/node \
   JOB_RESULT_TTL_MS=600000 \
   JOB_STALE_MS=840000
 
+RUN mkdir -p /home/node/app /home/node/.npm \
+  && chown -R node:node /home/node
+
 WORKDIR /home/node/app
 COPY --chown=node:node package.json package-lock.json* ./
 USER node
