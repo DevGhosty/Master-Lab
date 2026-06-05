@@ -1,7 +1,7 @@
 ---
 title: Master Lab API
 emoji: 🎚️
-colorFrom: teal
+colorFrom: green
 colorTo: yellow
 sdk: docker
 app_port: 7860
