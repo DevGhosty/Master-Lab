@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { JOB_TTL_MS, MAX_CHANNELS, MAX_DURATION_SECONDS } from "./constants.js";
+import { JOB_RESULT_TTL_MS, JOB_STALE_MS, MAX_CHANNELS, MAX_DURATION_SECONDS } from "./constants.js";
 import { buildMasterFilter, resolveMasteringTargets } from "./presets.js";
-import { masterToFiles, measureIntegratedLoudness, probeAudioFile, removeDir } from "./ffmpeg.js";
+import { analyzeMetricsOnly, masterToFiles, measureIntegratedLoudness, probeAudioFile, removeDir } from "./ffmpeg.js";
+import { buildMasterReport } from "./assistant.js";
 
 function validateProbe(probe) {
   if (probe.duration > MAX_DURATION_SECONDS) {
@@ -18,16 +19,23 @@ function validateProbe(probe) {
 /** @type {Map<string, object>} */
 const jobs = new Map();
 
-export function createJob() {
+function errorMessage(error) {
+  return error?.message || String(error);
+}
+
+export function createJob(requestId = null) {
   const id = randomUUID();
   const dir = path.join(os.tmpdir(), "master-lab", id);
   const job = {
     id,
+    requestId,
     dir,
     status: "queued",
     progress: 0,
     message: "Queued",
     createdAt: Date.now(),
+    updatedAt: Date.now(),
+    finishedAt: null,
     meta: null,
     files: null,
     error: null,
@@ -45,6 +53,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
   job.status = "processing";
   job.progress = 8;
   job.message = "Validating audio";
+  job.updatedAt = Date.now();
   await fs.mkdir(job.dir, { recursive: true });
 
   try {
@@ -52,7 +61,9 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     validateProbe(probe);
     job.progress = 15;
     job.message = "Measuring loudness";
+    job.updatedAt = Date.now();
     const loudness = await measureIntegratedLoudness(inputPath);
+    const originalAnalysis = await analyzeMetricsOnly(inputPath);
     const sourceLufs = Number.isFinite(Number(controls.sourceLoudnessDb))
       ? Number(controls.sourceLoudnessDb)
       : loudness.input_i;
@@ -62,6 +73,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     });
     job.progress = 20;
     job.message = "Applying mastering preset";
+    job.updatedAt = Date.now();
     const filter = buildMasterFilter(
       preset,
       {
@@ -77,6 +89,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     );
     job.progress = 25;
     job.message = "Rendering master and exports";
+    job.updatedAt = Date.now();
     const result = await masterToFiles(
       inputPath,
       job.dir,
@@ -84,6 +97,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
       ({ progress, message }) => {
         job.progress = progress;
         job.message = message;
+        job.updatedAt = Date.now();
       },
       {
         sourceLufs,
@@ -92,9 +106,15 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     );
     job.progress = 88;
     job.message = "Preparing downloads";
+    job.updatedAt = Date.now();
     job.files = result.files;
     job.meta = {
       masteredAnalysis: result.masteredAnalysis,
+      originalAnalysis,
+      masterReport: buildMasterReport(originalAnalysis, result.masteredAnalysis, {
+        ceilingDb: targets.effectiveCeilingDb,
+        preset,
+      }),
       limiterReductionDb: 0,
       preset,
       serverMaster: true,
@@ -104,14 +124,20 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     job.status = "done";
     job.progress = 100;
     job.message = "Master ready";
+    job.updatedAt = Date.now();
+    job.finishedAt = Date.now();
     console.info(
-      `[master] ok job=${job.id} duration=${probe.duration}s elapsed=${Date.now() - startedAt}ms`,
+      `[master] ok request=${job.requestId || "async"} preset=${preset} duration=${Math.round(probe.duration)}s elapsed=${Date.now() - startedAt}ms`,
     );
   } catch (error) {
     job.status = "failed";
-    job.error = error.message || String(error);
+    job.error = errorMessage(error);
     job.message = "Mastering failed";
-    console.error(`[master] fail job=${job.id} elapsed=${Date.now() - startedAt}ms`, error);
+    job.updatedAt = Date.now();
+    job.finishedAt = Date.now();
+    console.error(
+      `[master] fail request=${job.requestId || "async"} preset=${preset} elapsed=${Date.now() - startedAt}ms error=${errorMessage(error)}`,
+    );
     await removeDir(job.dir).catch(() => {});
   }
 }
@@ -120,7 +146,19 @@ export function scheduleJobCleanup() {
   setInterval(() => {
     const now = Date.now();
     for (const [id, job] of jobs) {
-      if (now - job.createdAt > JOB_TTL_MS) {
+      const finishedAt = job.finishedAt || job.createdAt;
+      const activeAge = now - (job.updatedAt || job.createdAt);
+      if ((job.status === "done" || job.status === "failed") && now - finishedAt > JOB_RESULT_TTL_MS) {
+        removeDir(job.dir).catch(() => {});
+        jobs.delete(id);
+        continue;
+      }
+      if ((job.status === "queued" || job.status === "processing") && activeAge > JOB_STALE_MS) {
+        job.status = "failed";
+        job.error = "Job expired while processing";
+        job.message = "Mastering failed";
+        job.updatedAt = now;
+        job.finishedAt = now;
         removeDir(job.dir).catch(() => {});
         jobs.delete(id);
       }

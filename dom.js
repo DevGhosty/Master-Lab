@@ -41,6 +41,12 @@ export const els = {
   presetRecommendation: document.querySelector("#presetRecommendation"),
   presetRecommendationText: document.querySelector("#presetRecommendationText"),
   presetRecommendationSelect: document.querySelector("#presetRecommendationSelect"),
+  mixAssistantPanel: document.querySelector("#mixAssistantPanel"),
+  mixAssistantSource: document.querySelector("#mixAssistantSource"),
+  mixAssistantTitle: document.querySelector("#mixAssistantTitle"),
+  mixAssistantSummary: document.querySelector("#mixAssistantSummary"),
+  mixAssistantRationale: document.querySelector("#mixAssistantRationale"),
+  mixAssistantNotes: document.querySelector("#mixAssistantNotes"),
   meteringDisclaimer: document.querySelector("#meteringDisclaimer"),
   analysisGuidance: document.querySelector("#analysisGuidance"),
   analysisDetails: document.querySelector("#analysisDetails"),
@@ -82,6 +88,11 @@ export const els = {
   masterPeak: document.querySelector("#masterPeak"),
   peakMeter: document.querySelector("#peakMeter"),
   peakLabel: document.querySelector("#peakLabel"),
+  masterReportPanel: document.querySelector("#masterReportPanel"),
+  masterReportBadge: document.querySelector("#masterReportBadge"),
+  masterReportSummary: document.querySelector("#masterReportSummary"),
+  masterReportGrid: document.querySelector("#masterReportGrid"),
+  masterReportNotes: document.querySelector("#masterReportNotes"),
   exportText: document.querySelector("#exportText"),
   wavDownloadLink: document.querySelector("#wavDownloadLink"),
   wav24DownloadLink: document.querySelector("#wav24DownloadLink"),
@@ -539,6 +550,70 @@ function appendMetric(container, label, value, hint = "") {
   container.appendChild(row);
 }
 
+function appendListItem(container, text) {
+  const item = document.createElement("li");
+  item.textContent = text;
+  container.appendChild(item);
+}
+
+function formatReportValue(value, unit) {
+  if (!Number.isFinite(value)) return "Not available";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)} ${unit}`;
+}
+
+export function renderMixAssistant(assistant) {
+  state.mixAssistant = assistant || null;
+  if (!els.mixAssistantPanel) return;
+  if (!assistant) {
+    els.mixAssistantPanel.classList.add("hidden");
+    return;
+  }
+  els.mixAssistantPanel.classList.remove("hidden");
+  els.mixAssistantPanel.dataset.source = assistant.source || "Local";
+  if (els.mixAssistantSource) {
+    els.mixAssistantSource.textContent = assistant.source === "AI" ? "Optional AI" : "Local analysis";
+  }
+  if (els.mixAssistantTitle) els.mixAssistantTitle.textContent = assistant.title || "Mastering Assistant";
+  if (els.mixAssistantSummary) els.mixAssistantSummary.textContent = assistant.summary || "";
+  if (els.mixAssistantRationale) els.mixAssistantRationale.textContent = assistant.rationale || "";
+  if (els.mixAssistantNotes) {
+    clearChildren(els.mixAssistantNotes);
+    (assistant.notes || []).forEach((note) => appendListItem(els.mixAssistantNotes, note));
+    (assistant.cautions || []).forEach((caution) => appendListItem(els.mixAssistantNotes, caution));
+  }
+}
+
+export function renderMasterReport(report) {
+  state.masterReport = report || null;
+  if (!els.masterReportPanel) return;
+  if (!report) {
+    els.masterReportPanel.classList.add("hidden");
+    return;
+  }
+  els.masterReportPanel.classList.remove("hidden");
+  els.masterReportPanel.dataset.verdict = report.verdict || "safe";
+  if (els.masterReportBadge) {
+    els.masterReportBadge.textContent = report.label || "Master report";
+    els.masterReportBadge.className = `master-report-badge is-${report.verdict || "safe"}`;
+  }
+  if (els.masterReportSummary) els.masterReportSummary.textContent = report.summary || "";
+  if (els.masterReportGrid) {
+    clearChildren(els.masterReportGrid);
+    const metrics = report.metrics || {};
+    [
+      ["Loudness change", formatReportValue(metrics.loudnessChangeDb, "LU")],
+      ["Master true peak", formatDbtp(metrics.masteredTruePeakDb)],
+      ["Ceiling margin", formatReportValue(metrics.truePeakMarginDb, "dB")],
+      ["Crest change", formatReportValue(metrics.crestChangeDb, "dB")],
+    ].forEach(([label, value]) => appendMetric(els.masterReportGrid, label, value));
+  }
+  if (els.masterReportNotes) {
+    clearChildren(els.masterReportNotes);
+    (report.notes || []).forEach((note) => appendListItem(els.masterReportNotes, note));
+  }
+}
+
 function renderPresetRecommendation(recommendation) {
   if (!els.presetRecommendation || !recommendation) return;
   const preset = PRESETS[recommendation.presetKey];
@@ -570,6 +645,7 @@ function renderSourceVerdict(verdict) {
 function hideChecklistExtras() {
   els.sourceVerdict?.classList.add("hidden");
   els.presetRecommendation?.classList.add("hidden");
+  renderMixAssistant(null);
   els.meteringDisclaimer?.classList.add("hidden");
   state.recommendedPresetKey = null;
   els.presetButtons.forEach((button) => button.classList.remove("is-recommended"));
@@ -618,9 +694,10 @@ export function renderAnalysis(file, buffer, analysis, warnings, readiness) {
     ["Clipping status", clipLabel, ""],
   ];
 
-  if (!analysis.serverAnalysis) {
+  if (Number.isFinite(analysis.lowRatioDb) || Number.isFinite(analysis.highRatioDb)) {
     rows.push(
       ["Low-end balance", formatDbValue(analysis.lowRatioDb), ""],
+      ["Low-mid density", formatDbValue(analysis.mudRatioDb), ""],
       ["High-end balance", formatDbValue(analysis.highRatioDb), ""],
     );
   }

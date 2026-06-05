@@ -13,4 +13,12 @@ services:
       - key: CORS_ORIGINS
         value: https://devghosty.github.io,http://localhost:8100,http://127.0.0.1:8100
       - key: CORS_ALLOW_PLATFORM_HOSTS
-        value: "true"
+        value: "false"
+      - key: MAX_ACTIVE_RENDER_TASKS
+        value: "2"
+      - key: FFMPEG_TIMEOUT_MS
+        value: "720000"
+      - key: JOB_RESULT_TTL_MS
+        value: "600000"
+      - key: JOB_STALE_MS
+        value: "840000"

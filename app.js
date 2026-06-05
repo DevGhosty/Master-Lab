@@ -17,6 +17,7 @@ import {
 import { PRESETS } from "./presets.js";
 import { state, getAudioContext, cleanupUrls } from "./state.js";
 import { analyzeAudioBuffer, buildWarnings, getReadiness, parseBitDepth, hasAudibleSignal } from "./analysis.js";
+import { buildMixAssistant, buildMasterReport } from "./assistant.js";
 import { masterBuffer } from "./mastering.js";
 import {
   els,
@@ -39,6 +40,8 @@ import {
   readControls,
   renderAnalysis,
   renderDecodeError,
+  renderMixAssistant,
+  renderMasterReport,
 } from "./dom.js";
 import {
   updateStats,
@@ -124,6 +127,7 @@ async function loadFile(file) {
     els.durationTime.textContent = formatTime(decoded.duration);
 
     renderAnalysis(file, decoded, analysis, warnings, readiness);
+    renderMixAssistant(buildMixAssistant({ analysis, warnings, file }));
     updateStats();
     drawWaveform();
     setPlaybackSource("original", false);
@@ -171,6 +175,13 @@ async function runMastering() {
     const mastered = await masterBuffer(state.originalBuffer, controls);
     state.masteredBuffer = mastered;
     state.masteredAnalysis = analyzeAudioBuffer(mastered);
+    state.masterReport = buildMasterReport({
+      originalAnalysis: state.analysis,
+      masteredAnalysis: state.masteredAnalysis,
+      presetKey: state.selectedPreset,
+      controls,
+      limiterReductionDb: state.limiterReductionDb,
+    });
 
     setStatus("Creating preview...");
     setProgress("preview", 84, "Creating preview");
@@ -184,6 +195,7 @@ async function runMastering() {
     els.compareTab.disabled = false;
     els.volumeMatchToggle.disabled = false;
     updateStats();
+    renderMasterReport(state.masterReport);
     setPlaybackSource("mastered", false);
     setProgress("done", 100, "Master ready");
     setAppPhase("mastered");
@@ -215,6 +227,7 @@ function resetMasterOnly() {
   state.masteredWaveformPeaks = null;
   state.masterJobId = null;
   state.limiterReductionDb = 0;
+  state.masterReport = null;
   state.masteredPreviewUrl = null;
   state.wavUrl = null;
   state.wav24Url = null;
@@ -234,6 +247,7 @@ function resetMasterOnly() {
   els.encoderStatus.textContent = isApiMode() ? COPY.encoder.server : COPY.encoder.local;
   updatePreviewModeHelp();
   updateExportRecommendation();
+  renderMasterReport(null);
 }
 
 function resetSession(clearInput = true) {
@@ -250,6 +264,8 @@ function resetSession(clearInput = true) {
   state.analysis = null;
   state.masteredAnalysis = null;
   state.lastReadiness = null;
+  state.mixAssistant = null;
+  state.masterReport = null;
 
   if (clearInput) els.fileInput.value = "";
   els.originalPlayer.removeAttribute("src");
@@ -257,6 +273,7 @@ function resetSession(clearInput = true) {
   els.trackTitle.textContent = "No track loaded";
   els.trackDetails.textContent = "Original and mastered waveforms will appear here.";
   resetAnalysisPanel();
+  renderMixAssistant(null);
   clearChildren(els.analysisGrid);
   setMasteringControlsLocked(true);
   clearChildren(els.warningList);

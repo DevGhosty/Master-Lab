@@ -8,14 +8,17 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   MAX_CHANNELS,
+  MAX_ACTIVE_RENDER_TASKS,
   MAX_DURATION_SECONDS,
   MAX_FILE_SIZE_BYTES,
   SYNC_MASTER_MAX_SECONDS,
+  SUPPORTED_EXTENSIONS,
   VALID_PRESETS,
 } from "./constants.js";
 import { analyzeAudioFile, masterToFiles, measureIntegratedLoudness, removeDir } from "./ffmpeg.js";
 import { buildMasterFilter, resolveMasteringTargets } from "./presets.js";
 import { createJob, getJob, runMasterJob, scheduleJobCleanup } from "./jobs.js";
+import { buildAssistantResponse, buildMasterReport } from "./assistant.js";
 import {
   createUploadSession,
   getUploadSession,
@@ -29,7 +32,9 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || "http://localhost:8100,http://
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const CORS_ALLOW_PLATFORM_HOSTS = process.env.CORS_ALLOW_PLATFORM_HOSTS !== "false";
+const CORS_ALLOW_PLATFORM_HOSTS = process.env.CORS_ALLOW_PLATFORM_HOSTS === "true";
+const CORS_ALLOW_LOCALHOST = process.env.CORS_ALLOW_LOCALHOST !== "false";
+let activeRenderTasks = 0;
 
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true;
@@ -37,7 +42,7 @@ function isAllowedCorsOrigin(origin) {
   try {
     const { hostname, protocol } = new URL(origin);
     if (protocol !== "http:" && protocol !== "https:") return false;
-    if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+    if (CORS_ALLOW_LOCALHOST && (hostname === "localhost" || hostname === "127.0.0.1")) return true;
     if (!CORS_ALLOW_PLATFORM_HOSTS) return false;
     if (hostname.endsWith(".onrender.com")) return true;
     if (hostname.endsWith(".hf.space")) return true;
@@ -46,6 +51,53 @@ function isAllowedCorsOrigin(origin) {
     return false;
   }
   return false;
+}
+
+function requestId() {
+  return randomUUID().slice(0, 12);
+}
+
+function errorMessage(error) {
+  return error?.message || String(error);
+}
+
+function getExtension(fileName = "") {
+  const match = /\.([a-z0-9]+)$/i.exec(fileName);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function isSupportedAudioUpload(file) {
+  const ext = getExtension(file.originalname);
+  return file.mimetype?.startsWith("audio/") || SUPPORTED_EXTENSIONS.has(ext);
+}
+
+function sizeBucket(bytes = 0) {
+  if (bytes < 10 * 1024 * 1024) return "<10MB";
+  if (bytes < 50 * 1024 * 1024) return "10-50MB";
+  if (bytes < 100 * 1024 * 1024) return "50-100MB";
+  return "100-150MB";
+}
+
+function durationBucket(seconds = 0) {
+  if (seconds < 60) return "<1m";
+  if (seconds < 180) return "1-3m";
+  if (seconds < 600) return "3-10m";
+  return "10-15m";
+}
+
+function acquireRenderTask() {
+  if (activeRenderTasks >= MAX_ACTIVE_RENDER_TASKS) return false;
+  activeRenderTasks += 1;
+  return true;
+}
+
+function releaseRenderTask() {
+  activeRenderTasks = Math.max(0, activeRenderTasks - 1);
+}
+
+function sendBusy(res) {
+  res.setHeader("Retry-After", "15");
+  res.status(429).json({ error: "Server is busy. Try again in a moment." });
 }
 
 const upload = multer({
@@ -61,9 +113,21 @@ const upload = multer({
     },
   }),
   limits: { fileSize: MAX_FILE_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (isSupportedAudioUpload(file)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error("This file type is not supported yet."));
+  },
 });
 
 const app = express();
+app.use((req, res, next) => {
+  req.id = requestId();
+  res.setHeader("X-Request-Id", req.id);
+  next();
+});
 app.use(
   cors({
     origin(origin, callback) {
@@ -71,10 +135,27 @@ app.use(
     },
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: "96kb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "master-lab-api" });
+  res.json({
+    ok: true,
+    service: "master-lab-api",
+    activeRenderTasks,
+    maxActiveRenderTasks: MAX_ACTIVE_RENDER_TASKS,
+    aiAvailable: Boolean(process.env.OPENAI_API_KEY),
+  });
+});
+
+app.post("/api/assistant", async (req, res) => {
+  try {
+    const payload = req.body && typeof req.body === "object" ? req.body : {};
+    const assistant = await buildAssistantResponse(payload);
+    res.json({ assistant });
+  } catch (error) {
+    console.error(`[assistant] fail request=${req.id}`, error);
+    res.status(500).json({ error: "Assistant analysis failed" });
+  }
 });
 
 async function cleanupUpload(filePath) {
@@ -93,17 +174,23 @@ function validateProbe(probe) {
 app.post("/api/analyze", upload.single("file"), async (req, res) => {
   let uploadPath = req.file?.path;
   const startedAt = Date.now();
+  let taskAcquired = false;
   try {
     if (!uploadPath) {
       res.status(400).json({ error: "Missing audio file" });
       return;
     }
+    if (!acquireRenderTask()) {
+      sendBusy(res);
+      return;
+    }
+    taskAcquired = true;
     const result = await analyzeAudioFile(uploadPath);
     validateProbe(result.probe);
-    const sessionId = createUploadSession(uploadPath, req.file.originalname);
+    const sessionId = createUploadSession(uploadPath, path.extname(req.file.originalname) || ".wav");
     uploadPath = null;
-    console.log(
-      `[analyze] ok ${req.file.originalname} size=${req.file.size} duration=${result.probe.duration}s elapsed=${Date.now() - startedAt}ms session=${sessionId}`,
+    console.info(
+      `[analyze] ok request=${req.id} size=${sizeBucket(req.file.size)} duration=${durationBucket(result.probe.duration)} elapsed=${Date.now() - startedAt}ms`,
     );
     res.json({
       probe: result.probe,
@@ -113,11 +200,12 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
     });
   } catch (error) {
     console.error(
-      `[analyze] fail ${req.file?.originalname || "unknown"} size=${req.file?.size || 0} elapsed=${Date.now() - startedAt}ms`,
+      `[analyze] fail request=${req.id} size=${sizeBucket(req.file?.size || 0)} elapsed=${Date.now() - startedAt}ms`,
       error,
     );
     res.status(400).json({ error: error.message || "Analysis failed" });
   } finally {
+    if (taskAcquired) releaseRenderTask();
     if (uploadPath) await cleanupUpload(uploadPath);
   }
 });
@@ -127,7 +215,7 @@ async function streamZip(files, meta, res) {
   res.setHeader("Content-Disposition", 'attachment; filename="master-lab-export.zip"');
   const archive = archiver("zip", { zlib: { level: 5 } });
   archive.on("error", (err) => {
-    console.error(err);
+    console.error(`[download] archive fail error=${errorMessage(err)}`);
     if (!res.headersSent) res.status(500).end();
   });
   archive.pipe(res);
@@ -163,11 +251,17 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
     sourceLoudnessDb: Number(req.body?.sourceLoudnessDb),
   };
   const workDir = path.join(os.tmpdir(), "master-lab", randomUUID());
+  let taskAcquired = false;
   try {
     if (!uploadPath) {
       res.status(400).json({ error: "Missing audio file" });
       return;
     }
+    if (!acquireRenderTask()) {
+      sendBusy(res);
+      return;
+    }
+    taskAcquired = true;
     const analyzed = await analyzeAudioFile(uploadPath);
     validateProbe(analyzed.probe);
     if (analyzed.probe.duration > SYNC_MASTER_MAX_SECONDS) {
@@ -206,6 +300,10 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
     const meta = {
       masteredAnalysis: result.masteredAnalysis,
       originalAnalysis: analyzed.analysis,
+      masterReport: buildMasterReport(analyzed.analysis, result.masteredAnalysis, {
+        ceilingDb: targets.effectiveCeilingDb,
+        preset,
+      }),
       limiterReductionDb: 0,
       preset,
       serverMaster: true,
@@ -213,11 +311,12 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
     };
     await streamZip(result.files, meta, res);
   } catch (error) {
-    console.error(error);
+    console.error(`[master] fail request=${req.id} preset=${preset} elapsed=sync error=${errorMessage(error)}`);
     if (!res.headersSent) {
-      res.status(500).json({ error: error.message || "Mastering failed" });
+      res.status(500).json({ error: errorMessage(error) || "Mastering failed" });
     }
   } finally {
+    if (taskAcquired) releaseRenderTask();
     await cleanupUpload(uploadPath);
     await removeDir(workDir);
   }
@@ -244,6 +343,7 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
     ceilingDb: Number(req.body?.ceilingDb),
     sourceLoudnessDb: Number(req.body?.sourceLoudnessDb),
   };
+  let taskAcquired = false;
   try {
     if (!uploadPath && sessionId) {
       cachedSession = getUploadSession(sessionId);
@@ -258,11 +358,18 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
       res.status(400).json({ error: "Missing audio file or sessionId" });
       return;
     }
-    const sourceName = req.file?.originalname || cachedSession?.originalName || "upload";
+    if (!acquireRenderTask()) {
+      sendBusy(res);
+      return;
+    }
+    taskAcquired = true;
+    const sourceExt = req.file?.originalname
+      ? path.extname(req.file.originalname)
+      : cachedSession?.originalExt || ".wav";
     const sourceSize = req.file?.size || 0;
-    console.info(`[master] start preset=${preset} file=${sourceName} size=${sourceSize || "session"} session=${consumedSessionId || "none"}`);
-    const job = createJob();
-    const ext = path.extname(sourceName) || path.extname(uploadPath) || ".wav";
+    console.info(`[master] start request=${req.id} preset=${preset} size=${sourceSize ? sizeBucket(sourceSize) : "session"}`);
+    const job = createJob(req.id);
+    const ext = sourceExt || path.extname(uploadPath) || ".wav";
     const inputCopy = path.join(job.dir, `input${ext}`);
     await fs.mkdir(job.dir, { recursive: true });
     await fs.copyFile(uploadPath, inputCopy);
@@ -275,13 +382,15 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
       status: job.status,
     });
     runMasterJob(job, inputCopy, preset, controls).catch((err) => {
-      console.error(err);
-    });
+      console.error(`[master] async crash request=${req.id} preset=${preset} error=${errorMessage(err)}`);
+    }).finally(releaseRenderTask);
+    taskAcquired = false;
   } catch (error) {
-    console.error(error);
+    console.error(`[master] start fail request=${req.id} preset=${preset} error=${errorMessage(error)}`);
     if (consumedSessionId) await releaseUploadSession(consumedSessionId).catch(() => {});
-    res.status(400).json({ error: error.message || "Could not start job" });
+    res.status(400).json({ error: errorMessage(error) || "Could not start job" });
   } finally {
+    if (taskAcquired) releaseRenderTask();
     if (ownsUpload) await cleanupUpload(uploadPath);
   }
 });
@@ -315,7 +424,7 @@ app.get("/api/jobs/:id/download", async (req, res) => {
   try {
     await streamZip(job.files, job.meta, res);
   } catch (error) {
-    console.error(error);
+    console.error(`[download] fail request=${req.id} error=${errorMessage(error)}`);
     if (!res.headersSent) res.status(500).json({ error: "Download failed" });
   }
 });
@@ -337,9 +446,30 @@ app.get("/api/jobs/:id/file/:kind", async (req, res) => {
   createReadStream(filePath).pipe(res);
 });
 
+app.use((error, req, res, _next) => {
+  const status = error?.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+  console.error(`[request] fail request=${req.id} status=${status} error=${errorMessage(error)}`);
+  if (!res.headersSent) {
+    res.status(status).json({ error: errorMessage(error) || "Request failed" });
+  }
+});
+
 scheduleJobCleanup();
 scheduleSessionCleanup();
 
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`Master Lab API listening on http://${HOST}:${PORT}`);
 });
+
+function shutdown(signal) {
+  console.log(`[server] ${signal} received; closing HTTP server`);
+  server.close(() => {
+    process.exit(0);
+  });
+  setTimeout(() => {
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

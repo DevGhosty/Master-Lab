@@ -27,6 +27,8 @@ export const state = {
   masteredWaveformPeaks: null,
   masterJobId: null,
   lastReadiness: null,
+  mixAssistant: null,
+  masterReport: null,
 };
 
 export function getAudioContext() {

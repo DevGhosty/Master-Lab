@@ -1,23 +1,42 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { FFMPEG_TIMEOUT_MS } from "./constants.js";
 import { computePostTrimGainDb } from "./loudnessPolicy.js";
 
 const FFMPEG_GLOBAL = ["-hide_banner", "-threads", "0"];
 
 export function runCommand(cmd, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { ...options, windowsHide: true });
+    const { timeoutMs = FFMPEG_TIMEOUT_MS, ...spawnOptions } = options;
+    const child = spawn(cmd, args, { ...spawnOptions, windowsHide: true });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const timeout = timeoutMs > 0
+      ? setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          child.kill("SIGKILL");
+          reject(new Error(`${cmd} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
+        }, timeoutMs)
+      : null;
     child.stdout?.on("data", (chunk) => {
       stdout += chunk.toString();
     });
     child.stderr?.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    child.on("error", reject);
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      reject(error);
+    });
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
       resolve({ code, stdout, stderr });
     });
   });
@@ -154,7 +173,7 @@ function probeFromFfprobe(probe) {
   };
 }
 
-function buildAnalysisFromMetrics(metrics, clip, silence, channels) {
+function buildAnalysisFromMetrics(metrics, clip, silence, channels, bandMetrics = {}) {
   const { peakDb, rmsDb, peak, rms, loudnessDb, truePeakDb } = metrics;
   const safePeakDb = Number.isFinite(peakDb) ? peakDb : null;
   const safeRmsDb = Number.isFinite(rmsDb) ? rmsDb : null;
@@ -166,11 +185,11 @@ function buildAnalysisFromMetrics(metrics, clip, silence, channels) {
     truePeakDb: Number.isFinite(truePeakDb) ? truePeakDb : null,
     loudnessDb: Number.isFinite(loudnessDb) ? loudnessDb : null,
     crestDb: safePeakDb != null && safeRmsDb != null ? safePeakDb - safeRmsDb : null,
-    lowRatioDb: null,
-    mudRatioDb: null,
-    midRatioDb: null,
-    presenceRatioDb: null,
-    highRatioDb: null,
+    lowRatioDb: Number.isFinite(bandMetrics.lowRatioDb) ? bandMetrics.lowRatioDb : null,
+    mudRatioDb: Number.isFinite(bandMetrics.mudRatioDb) ? bandMetrics.mudRatioDb : null,
+    midRatioDb: Number.isFinite(bandMetrics.midRatioDb) ? bandMetrics.midRatioDb : null,
+    presenceRatioDb: Number.isFinite(bandMetrics.presenceRatioDb) ? bandMetrics.presenceRatioDb : null,
+    highRatioDb: Number.isFinite(bandMetrics.highRatioDb) ? bandMetrics.highRatioDb : null,
     dcOffset: 0,
     dcOffsetDb: -80,
     stereoCorrelation: null,
@@ -244,6 +263,75 @@ function peaksFromFloat32File(buffer, width = 800) {
   return peaks;
 }
 
+function linearToDb(value) {
+  if (value <= 0 || !Number.isFinite(value)) return -Infinity;
+  return 20 * Math.log10(value);
+}
+
+function rmsFromSamples(samples) {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    sum += samples[i] * samples[i];
+  }
+  return Math.sqrt(sum / Math.max(1, samples.length));
+}
+
+function onePoleLowpassRms(samples, sampleRate, cutoff) {
+  const alpha = 1 - Math.exp((-2 * Math.PI * cutoff) / sampleRate);
+  let y = 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    y += alpha * (samples[i] - y);
+    sum += y * y;
+  }
+  return Math.sqrt(sum / Math.max(1, samples.length));
+}
+
+function onePoleHighpassRms(samples, sampleRate, cutoff) {
+  const alpha = Math.exp((-2 * Math.PI * cutoff) / sampleRate);
+  let low = 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    low = (1 - alpha) * samples[i] + alpha * low;
+    const high = samples[i] - low;
+    sum += high * high;
+  }
+  return Math.sqrt(sum / Math.max(1, samples.length));
+}
+
+function bandpassRms(samples, sampleRate, lowCutoff, highCutoff) {
+  const lowAlpha = 1 - Math.exp((-2 * Math.PI * lowCutoff) / sampleRate);
+  const highAlpha = 1 - Math.exp((-2 * Math.PI * highCutoff) / sampleRate);
+  let low = 0;
+  let high = 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    low += lowAlpha * (samples[i] - low);
+    high += highAlpha * (samples[i] - high);
+    const band = high - low;
+    sum += band * band;
+  }
+  return Math.sqrt(sum / Math.max(1, samples.length));
+}
+
+function estimateBandMetricsFromMono(buffer, sampleRate = 8000) {
+  const samples = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+  const fullRms = rmsFromSamples(samples);
+  if (!fullRms) return {};
+  const lowRms = onePoleLowpassRms(samples, sampleRate, 160);
+  const lowMidRms = bandpassRms(samples, sampleRate, 180, 520);
+  const midRms = bandpassRms(samples, sampleRate, 520, 2400);
+  const presenceRms = bandpassRms(samples, sampleRate, 2400, 3600);
+  const highRms = onePoleHighpassRms(samples, sampleRate, 3600);
+  return {
+    lowRatioDb: linearToDb(lowRms / fullRms),
+    mudRatioDb: linearToDb(lowMidRms / fullRms),
+    midRatioDb: linearToDb(midRms / fullRms),
+    presenceRatioDb: linearToDb(presenceRms / fullRms),
+    highRatioDb: linearToDb(highRms / fullRms),
+  };
+}
+
 async function readPeaksFile(peaksRaw, width = 800) {
   let buffer;
   try {
@@ -254,6 +342,21 @@ async function readPeaksFile(peaksRaw, width = 800) {
     await fs.unlink(peaksRaw).catch(() => {});
   }
   return peaksFromFloat32File(buffer, width);
+}
+
+async function readPeaksAndBandMetricsFile(peaksRaw, width = 800) {
+  let buffer;
+  try {
+    buffer = await fs.readFile(peaksRaw);
+  } catch {
+    return { waveformPeaks: [], bandMetrics: {} };
+  } finally {
+    await fs.unlink(peaksRaw).catch(() => {});
+  }
+  return {
+    waveformPeaks: peaksFromFloat32File(buffer, width),
+    bandMetrics: estimateBandMetricsFromMono(buffer),
+  };
 }
 
 const METRICS_FILTER_COMPLEX = [
@@ -362,8 +465,8 @@ export async function analyzeAudioFile(inputPath) {
   const peaksRaw = `${inputPath}.peaks.f32le`;
   const { loudness, stats, clip, silence } = await runCombinedAnalyzePass(inputPath, peaksRaw);
   const metrics = reconcilePeakMetrics(stats, loudness);
-  const waveformPeaks = await readPeaksFile(peaksRaw);
-  const analysis = buildAnalysisFromMetrics(metrics, clip, silence, probe.channels);
+  const { waveformPeaks, bandMetrics } = await readPeaksAndBandMetricsFile(peaksRaw);
+  const analysis = buildAnalysisFromMetrics(metrics, clip, silence, probe.channels, bandMetrics);
   applyWaveformFallback(analysis, waveformPeaks);
   return {
     probe,
@@ -392,7 +495,7 @@ export async function extractWaveformPeaks(inputPath, width = 800) {
 }
 
 export async function applyGainToFile(filePath, gainDb) {
-  if (gainDb <= 0.01) return;
+  if (Math.abs(gainDb) <= 0.01) return;
   const ext = path.extname(filePath);
   const tempPath = `${filePath}.gain${ext}`;
   const { code, stderr } = await runCommand("ffmpeg", [
@@ -406,6 +509,17 @@ export async function applyGainToFile(filePath, gainDb) {
   ]);
   if (code !== 0) throw new Error(stderr || `Gain apply failed for ${path.basename(filePath)}`);
   await fs.rename(tempPath, filePath);
+}
+
+async function enforceCeiling(files, masteredAnalysis, ceilingDb) {
+  if (!Number.isFinite(masteredAnalysis?.truePeakDb) || !Number.isFinite(ceilingDb)) return 0;
+  const excessDb = masteredAnalysis.truePeakDb - ceilingDb;
+  if (excessDb <= 0.03) return 0;
+  const trimDb = -excessDb - 0.02;
+  for (const filePath of Object.values(files)) {
+    await applyGainToFile(filePath, trimDb);
+  }
+  return trimDb;
 }
 
 async function applyPreserveTrim(files, sourceLufs, masteredAnalysis, ceilingDb) {
@@ -496,6 +610,12 @@ export async function masterToFiles(inputPath, workDir, filterChain, onProgress,
   if (options.sourceLufs != null && Number.isFinite(options.sourceLufs)) {
     report(88, "Matching source loudness");
     await applyPreserveTrim(files, options.sourceLufs, masteredAnalysis, options.ceilingDb ?? -1);
+    masteredAnalysis = await analyzeMetricsOnly(previewPath);
+  }
+
+  if (Number.isFinite(options.ceilingDb)) {
+    report(90, "Verifying true peak ceiling");
+    await enforceCeiling(files, masteredAnalysis, options.ceilingDb);
     masteredAnalysis = await analyzeMetricsOnly(previewPath);
   }
 

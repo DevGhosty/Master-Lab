@@ -20,6 +20,7 @@ import {
 import { formatBytes, formatTime, nextFrame } from "./utils.js";
 import { PRESETS } from "./presets.js";
 import { buildWarnings, getReadiness, normalizeAnalysisMetrics, hasAudibleSignal } from "./analysis.js";
+import { buildMixAssistant, buildMasterReport } from "./assistant.js";
 import {
   els,
   renderDecodeError,
@@ -30,6 +31,8 @@ import {
   setStatusBanner,
   clearStatusBanner,
   setExportState,
+  renderMixAssistant,
+  renderMasterReport,
   updateExportRecommendation,
   readControls,
   updateServerStatusUI,
@@ -46,24 +49,6 @@ import { disableExports, enableDownload } from "./export.js";
 let serverStatus = "unknown";
 let statusPollTimer = null;
 let wakeInProgress = false;
-
-// #region agent log
-function debugLog(location, message, data = {}, hypothesisId = "") {
-  fetch("http://127.0.0.1:7879/ingest/ad2e6eb4-20ca-46db-bc4c-e6cc64f15731", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "3d1c5b" },
-    body: JSON.stringify({
-      sessionId: "3d1c5b",
-      location,
-      message,
-      data,
-      hypothesisId,
-      runId: "pre-fix",
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-}
-// #endregion
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -92,6 +77,42 @@ function isServerReachabilityError(error) {
 
 function isTransientServerHttpStatus(status) {
   return status === 408 || status === 502 || status === 503 || status === 504;
+}
+
+function assistantWarnings(warnings) {
+  return warnings.map((warning) => ({
+    level: warning.level,
+    title: warning.title,
+    text: warning.text,
+    try: warning.try || "",
+  }));
+}
+
+async function fetchAssistant(payload) {
+  if (!isApiMode()) return null;
+  try {
+    const response = await fetchWithTimeout(
+      `${getApiBase()}/api/assistant`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      API_FETCH_TIMEOUT_MS,
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.assistant || null;
+  } catch {
+    return null;
+  }
+}
+
+function refreshServerAssistant(payload, fallback) {
+  renderMixAssistant(fallback);
+  fetchAssistant(payload).then((assistant) => {
+    if (assistant) renderMixAssistant(buildMixAssistant({ ...payload, ai: assistant }));
+  });
 }
 
 function markServerOffline() {
@@ -142,15 +163,6 @@ export async function checkServerHealth(options = {}) {
     const payload = await response.json().catch(() => ({}));
     return { ok: payload.ok === true || response.ok };
   } catch (error) {
-    // #region agent log
-    debugLog("api.js:checkServerHealth:catch", "health check failed", {
-      errorName: error?.name,
-      errorMessage: error?.message,
-      origin: typeof window !== "undefined" ? window.location.origin : "",
-      localDevCorsBlocked: isLocalDevCorsBlocked(),
-      timeoutMs,
-    }, isLocalDevCorsBlocked() ? "F" : "E");
-    // #endregion
     return {
       ok: false,
       error: isFetchTimeoutError(error) ? "timeout" : "network",
@@ -178,15 +190,6 @@ export async function wakeServer() {
   for (let attempt = 1; attempt <= API_HEALTH_WAKE_ATTEMPTS; attempt += 1) {
     setServerStatus("waking", `${COPY.serverStatus.waking} (${attempt}/${API_HEALTH_WAKE_ATTEMPTS})`);
     const result = await checkServerHealth({ timeoutMs: API_HEALTH_WAKE_TIMEOUT_MS });
-    // #region agent log
-    debugLog("api.js:wakeServer:attempt", "wake attempt finished", {
-      attempt,
-      ok: result.ok,
-      error: result.error || null,
-      origin: typeof window !== "undefined" ? window.location.origin : "",
-      localDevCorsBlocked: isLocalDevCorsBlocked(),
-    }, result.ok ? "E" : isLocalDevCorsBlocked() ? "F" : "E");
-    // #endregion
     if (result.ok) {
       wakeInProgress = false;
       setServerStatus("online");
@@ -260,17 +263,6 @@ export async function loadFileViaApi(file, options = {}) {
   setStatus("Uploading to server for analysis… Large files may take 1–3 minutes.");
   setProgress("analyze", 12, "Uploading audio");
 
-  const analyzeStartedAt = Date.now();
-  // #region agent log
-  debugLog("api.js:loadFileViaApi:start", "analyze upload started", {
-    fileSize: file.size,
-    fileName: file.name,
-    serverStatus,
-    timeoutMs: API_ANALYZE_TIMEOUT_MS,
-    isRetry,
-  }, "A");
-  // #endregion
-
   try {
     const form = new FormData();
     form.append("file", file);
@@ -280,14 +272,6 @@ export async function loadFileViaApi(file, options = {}) {
       API_ANALYZE_TIMEOUT_MS,
     );
     const payload = await response.json();
-
-    // #region agent log
-    debugLog("api.js:loadFileViaApi:afterPost", "analyze response received", {
-      ok: response.ok,
-      status: response.status,
-      elapsedMs: Date.now() - analyzeStartedAt,
-    }, response.ok ? "B" : "B");
-    // #endregion
 
     if (!response.ok) {
       if (isTransientServerHttpStatus(response.status) && !isRetry) {
@@ -316,6 +300,7 @@ export async function loadFileViaApi(file, options = {}) {
     const probeBuffer = getProbeBuffer();
     const warnings = buildWarnings(file, probeBuffer, state.analysis);
     const readiness = getReadiness(warnings, state.analysis);
+    const localAssistant = buildMixAssistant({ analysis: state.analysis, warnings, file });
 
     els.originalPlayer.src = state.originalUrl;
     els.originalPlayer.load();
@@ -325,6 +310,15 @@ export async function loadFileViaApi(file, options = {}) {
     els.durationTime.textContent = formatTime(probeBuffer.duration);
 
     renderAnalysis(file, probeBuffer, state.analysis, warnings, readiness);
+    refreshServerAssistant(
+      {
+        stage: "analysis",
+        analysis: state.analysis,
+        warnings: assistantWarnings(warnings),
+        preset: state.selectedPreset,
+      },
+      localAssistant,
+    );
     updateStats();
     drawWaveform();
     setPlaybackSource("original", false);
@@ -346,17 +340,6 @@ export async function loadFileViaApi(file, options = {}) {
     return true;
   } catch (error) {
     console.error(error);
-    // #region agent log
-    debugLog("api.js:loadFileViaApi:catch", "analyze failed", {
-      errorName: error?.name,
-      errorMessage: error?.message,
-      isTimeout: isFetchTimeoutError(error),
-      isReachability: isServerReachabilityError(error),
-      elapsedMs: Date.now() - analyzeStartedAt,
-      serverStatus,
-      isRetry,
-    }, isFetchTimeoutError(error) ? "A" : "D");
-    // #endregion
     const serverError = isServerReachabilityError(error);
     if (serverError) markServerOffline();
     if (serverError && !isRetry) {
@@ -387,16 +370,6 @@ export async function runMasteringViaApi() {
   let masterJobDone = false;
   let downloadsReady = false;
 
-  // #region agent log
-  debugLog("api.js:runMasteringViaApi:start", "mastering started", {
-    fileSize: state.file?.size,
-    fileName: state.fileName,
-    serverStatus,
-    timeoutMs: API_FETCH_TIMEOUT_MS,
-    durationSec: state.apiProbe?.duration,
-  }, "A");
-  // #endregion
-
   try {
     const controls = readControls();
     const form = new FormData();
@@ -426,30 +399,11 @@ export async function runMasteringViaApi() {
       form.append("sourceLoudnessDb", String(state.analysis.loudnessDb));
     }
 
-    const masterPostStartedAt = Date.now();
-    // #region agent log
-    debugLog("api.js:runMasteringViaApi:beforePost", "posting master job", {
-      apiBase: getApiBase(),
-      preset: state.selectedPreset,
-      timeoutMs: API_FETCH_TIMEOUT_MS,
-    }, "A");
-    // #endregion
-
     const startResponse = await fetchWithTimeout(`${getApiBase()}/api/master/jobs`, {
       method: "POST",
       body: form,
     }, API_MASTER_START_TIMEOUT_MS);
     const startPayload = await startResponse.json();
-
-    // #region agent log
-    debugLog("api.js:runMasteringViaApi:afterPost", "master job post finished", {
-      ok: startResponse.ok,
-      status: startResponse.status,
-      elapsedMs: Date.now() - masterPostStartedAt,
-      jobId: startPayload?.jobId || null,
-      error: startPayload?.error || null,
-    }, startResponse.ok ? "B" : "B");
-    // #endregion
 
     if (!startResponse.ok) {
       throw new Error(startPayload.error || "Could not start mastering job");
@@ -466,21 +420,8 @@ export async function runMasteringViaApi() {
         await new Promise((resolve) => setTimeout(resolve, 800));
       }
       pollCount += 1;
-      const pollStartedAt = Date.now();
       const statusResponse = await fetchWithTimeout(`${getApiBase()}/api/jobs/${state.masterJobId}`);
       job = await statusResponse.json();
-      // #region agent log
-      if (pollCount <= 3 || !statusResponse.ok || job.status === "failed") {
-        debugLog("api.js:runMasteringViaApi:poll", "job poll tick", {
-          pollCount,
-          ok: statusResponse.ok,
-          status: statusResponse.status,
-          jobStatus: job?.status,
-          progress: job?.progress,
-          elapsedMs: Date.now() - pollStartedAt,
-        }, "C");
-      }
-      // #endregion
       if (!statusResponse.ok) {
         if (statusResponse.status === 404) {
           throw new Error(COPY.errors.masterJobLost);
@@ -499,6 +440,13 @@ export async function runMasteringViaApi() {
 
     masterJobDone = true;
     state.masteredAnalysis = job.meta.masteredAnalysis;
+    state.masterReport = job.meta.masterReport || buildMasterReport({
+      originalAnalysis: state.analysis,
+      masteredAnalysis: state.masteredAnalysis,
+      presetKey: state.selectedPreset,
+      controls: readControls(),
+      limiterReductionDb: job.meta.limiterReductionDb || 0,
+    });
     state.masteredWaveformPeaks = job.meta.waveformPeaks || null;
     state.limiterReductionDb = job.meta.limiterReductionDb || 0;
 
@@ -541,6 +489,7 @@ export async function runMasteringViaApi() {
     els.compareTab.disabled = false;
     els.volumeMatchToggle.disabled = false;
     updateStats();
+    renderMasterReport(state.masterReport);
     setPlaybackSource("mastered", false);
     setProgress("done", 100, "Master ready");
     setAppPhase("mastered");
@@ -548,17 +497,6 @@ export async function runMasteringViaApi() {
     setStatus(COPY.status.masterReadyServer);
   } catch (error) {
     console.error(error);
-    // #region agent log
-    debugLog("api.js:runMasteringViaApi:catch", "mastering failed", {
-      errorName: error?.name,
-      errorMessage: error?.message,
-      isTimeout: isFetchTimeoutError(error),
-      isReachability: isServerReachabilityError(error),
-      serverStatus,
-      masterJobDone,
-      downloadsReady,
-    }, isFetchTimeoutError(error) ? "A" : "D");
-    // #endregion
     if (downloadsReady || (masterJobDone && state.masteredPreviewUrl && state.wavUrl)) {
       setAppPhase("mastered");
       setStatusBanner(COPY.status.masterReady, "success");

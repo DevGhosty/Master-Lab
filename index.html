@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'self' http://localhost:8080 http://127.0.0.1:8080 http://127.0.0.1:7879 https:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'self' http://localhost:8080 http://127.0.0.1:8080 https:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     />
     <title>Master Lab</title>
     <link rel="stylesheet" href="styles.css" />
@@ -126,6 +126,15 @@
                 Use recommendation
               </button>
             </div>
+            <section class="assistant-panel hidden" id="mixAssistantPanel" aria-label="Mastering assistant notes">
+              <div class="assistant-panel-header">
+                <span class="assistant-kicker" id="mixAssistantSource">Local</span>
+                <h3 id="mixAssistantTitle">Mastering Assistant</h3>
+              </div>
+              <p id="mixAssistantSummary"></p>
+              <p class="helper-text" id="mixAssistantRationale"></p>
+              <ul class="assistant-list" id="mixAssistantNotes"></ul>
+            </section>
             <p class="helper-text metering-disclaimer hidden" id="meteringDisclaimer"></p>
             <p class="helper-text" id="analysisGuidance">Technical details from your file appear below.</p>
             <details class="analysis-details" id="analysisDetails">
@@ -352,13 +361,23 @@
               <div class="meter">
                 <div class="meter-fill" id="peakMeter"></div>
               </div>
-              <div class="meter-scale">
+            <div class="meter-scale">
                 <span>-60</span>
                 <span>-18</span>
                 <span>-6</span>
                 <span>0</span>
               </div>
             </div>
+          </section>
+
+          <section class="master-report hidden" id="masterReportPanel" aria-label="Master report">
+            <div class="master-report-header">
+              <span class="master-report-badge" id="masterReportBadge">Safe master</span>
+              <h2>Master Report</h2>
+            </div>
+            <p id="masterReportSummary"></p>
+            <dl class="master-report-grid" id="masterReportGrid"></dl>
+            <ul class="assistant-list" id="masterReportNotes"></ul>
           </section>
 
           <section class="export-box is-pending" id="exportBox" aria-label="Free export downloads">

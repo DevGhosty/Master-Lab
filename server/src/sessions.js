@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { SESSION_TTL_MS } from "./constants.js";
 
-/** @type {Map<string, { path: string, originalName: string, createdAt: number }>} */
+/** @type {Map<string, { path: string, originalExt: string, createdAt: number }>} */
 const sessions = new Map();
 
-export function createUploadSession(filePath, originalName) {
+export function createUploadSession(filePath, originalExt = ".wav") {
   const id = randomUUID();
   sessions.set(id, {
     path: filePath,
-    originalName: originalName || "upload",
+    originalExt,
     createdAt: Date.now(),
   });
   return id;

@@ -12,7 +12,7 @@ npm install
 npm start
 ```
 
-API listens on `http://localhost:8080`. Health check: `GET /health`.
+API listens on `http://localhost:8080` when run directly with npm. The Docker image listens on port `7860` for Hugging Face Spaces. Health check: `GET /health`.
 
 Point the static UI at the API by setting `window.MASTER_LAB_API` in [../config.js](../config.js) (see [../config.example.js](../config.example.js)).
 
@@ -49,11 +49,19 @@ Uses the repo root [../render.yaml](../render.yaml) and [../Dockerfile](../Docke
 
 CORS: set `CORS_ALLOW_PLATFORM_HOSTS=true` (default in `render.yaml`) so `*.onrender.com` is allowed automatically.
 
-### Option B — Hugging Face Spaces (also free, no card)
+### Option B — Hugging Face Spaces (recommended free CPU backend)
 
-See [deploy/huggingface/README.md](deploy/huggingface/README.md).
+See [../deploy/huggingface/README.md](../deploy/huggingface/README.md).
 
-Create a **Docker** Space from this repo’s root `Dockerfile`, then set `MASTER_LAB_API` to `https://<user>-<space>.hf.space`.
+Create a **Docker** Space from this repo’s root `Dockerfile`, then set `MASTER_LAB_API` to `https://devghosty-master-lab.hf.space`. The root README already includes the Space metadata (`sdk: docker`, `app_port: 7860`).
+
+### Docker locally
+
+```bash
+docker compose up --build
+```
+
+The API will be available at `http://localhost:8080/health`.
 
 ### Option C — Fly.io (requires credit card)
 
@@ -68,10 +76,17 @@ Only use if you already have Fly billing set up. See [fly.toml](fly.toml).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `8080` | Listen port (set by host) |
+| `PORT` | `8080` npm / `7860` Docker | Listen port (set by host) |
 | `HOST` | `0.0.0.0` | Bind address for containers |
 | `CORS_ORIGINS` | `https://devghosty.github.io,...` | Exact allowed browser origins |
-| `CORS_ALLOW_PLATFORM_HOSTS` | `true` | Also allow `*.onrender.com`, `*.hf.space`, `*.fly.dev` |
+| `CORS_ALLOW_PLATFORM_HOSTS` | `false` | Optional wildcard platform CORS; keep false in production and use exact origins |
+| `CORS_ALLOW_LOCALHOST` | `true` | Allow local test origins during development |
+| `MAX_ACTIVE_RENDER_TASKS` | `2` | Limits concurrent FFmpeg analysis/mastering tasks on free hosts |
+| `FFMPEG_TIMEOUT_MS` | `720000` | Kills stuck FFmpeg/ffprobe work after 12 minutes |
+| `JOB_RESULT_TTL_MS` | `600000` | Keeps completed async job exports available for 10 minutes |
+| `JOB_STALE_MS` | `840000` | Expires abandoned active jobs after the FFmpeg timeout plus a small buffer |
+| `OPENAI_API_KEY` | unset | Optional server-only key for AI assistant notes; raw audio is never sent |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | Optional AI model name when `OPENAI_API_KEY` is set |
 
 ## Privacy
 
