@@ -17,7 +17,7 @@ sdk: docker
 app_port: 7860
 ```
 
-The Docker image runs as Hugging Face’s non-root `user` account, installs FFmpeg, exposes `/health`, and sets conservative memory/concurrency defaults for the free CPU tier.
+The Docker image runs as the base Node image’s non-root UID 1000 `node` account, installs FFmpeg, exposes `/health`, and sets conservative memory/concurrency defaults for the free CPU tier.
 
 ## Required variables
 
