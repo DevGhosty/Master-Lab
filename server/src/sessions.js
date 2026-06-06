@@ -32,13 +32,17 @@ export async function releaseUploadSession(id) {
   await fs.unlink(session.path).catch(() => {});
 }
 
+export function cleanupExpiredSessions() {
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (now - session.createdAt > SESSION_TTL_MS) {
+      releaseUploadSession(id).catch(() => {});
+    }
+  }
+}
+
 export function scheduleSessionCleanup() {
   setInterval(() => {
-    const now = Date.now();
-    for (const [id, session] of sessions) {
-      if (now - session.createdAt > SESSION_TTL_MS) {
-        releaseUploadSession(id).catch(() => {});
-      }
-    }
+    cleanupExpiredSessions();
   }, 60_000);
 }

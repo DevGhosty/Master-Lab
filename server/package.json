@@ -8,11 +8,13 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js && node --check src/ffmpeg.js && node --check src/assistant.js && node --check src/jobs.js && node --check src/sessions.js",
+    "check": "node --check src/index.js && node --check src/ffmpeg.js && node --check src/assistant.js && node --check src/jobs.js && node --check src/sessions.js && node --check src/errors.js",
     "smoke": "node -e \"import('./src/presets.js').then(({ PRESETS, buildMasterFilter }) => { for (const key of Object.keys(PRESETS)) buildMasterFilter(key); console.log('preset filters ok'); })\"",
-    "test": "npm run check && npm run smoke && npm run test:presets && npm run test:audio",
+    "test": "npm run check && npm run smoke && npm run test:presets && npm run test:security && npm run test:audio",
     "test:audio": "node --test test/audio-analysis.test.mjs",
-    "test:presets": "node --test test/preset-spec.test.mjs"
+    "test:presets": "node --test test/preset-spec.test.mjs",
+    "test:security": "node --test test/upload-security.test.mjs",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "engines": {
     "node": ">=20 <25"
@@ -21,7 +23,7 @@
     "archiver": "^7.0.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.1.1",
     "uuid": "^11.1.0"
   }
 }

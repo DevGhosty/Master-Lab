@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "test": "npm --prefix server test",
-    "test:audio": "npm --prefix server run test:audio"
+    "test:audio": "npm --prefix server run test:audio",
+    "test:security": "npm --prefix server run test:security",
+    "audit:prod": "npm --prefix server run audit:prod"
   }
 }

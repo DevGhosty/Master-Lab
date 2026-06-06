@@ -2,25 +2,17 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { JOB_RESULT_TTL_MS, JOB_STALE_MS, MAX_CHANNELS, MAX_DURATION_SECONDS } from "./constants.js";
+import { JOB_RESULT_TTL_MS, JOB_STALE_MS } from "./constants.js";
 import { buildMasterFilter, resolveMasteringTargets } from "./presets.js";
-import { analyzeMetricsOnly, masterToFiles, measureIntegratedLoudness, probeAudioFile, removeDir } from "./ffmpeg.js";
+import { analyzeMetricsOnly, masterToFiles, measureIntegratedLoudness, removeDir, validateAudioFile } from "./ffmpeg.js";
 import { buildMasterReport } from "./assistant.js";
-
-function validateProbe(probe) {
-  if (probe.duration > MAX_DURATION_SECONDS) {
-    throw new Error(`File is longer than ${MAX_DURATION_SECONDS} seconds`);
-  }
-  if (probe.channels > MAX_CHANNELS) {
-    throw new Error("Only mono or stereo files are supported");
-  }
-}
+import { clientErrorMessage, internalErrorMessage } from "./errors.js";
 
 /** @type {Map<string, object>} */
 const jobs = new Map();
 
 function errorMessage(error) {
-  return error?.message || String(error);
+  return internalErrorMessage(error);
 }
 
 export function createJob(requestId = null) {
@@ -50,6 +42,7 @@ export function getJob(id) {
 
 export async function runMasterJob(job, inputPath, preset, controls) {
   const startedAt = Date.now();
+  let probe = null;
   job.status = "processing";
   job.progress = 8;
   job.message = "Validating audio";
@@ -57,8 +50,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
   await fs.mkdir(job.dir, { recursive: true });
 
   try {
-    const probe = await probeAudioFile(inputPath);
-    validateProbe(probe);
+    probe = await validateAudioFile(inputPath);
     job.progress = 15;
     job.message = "Measuring loudness";
     job.updatedAt = Date.now();
@@ -131,7 +123,7 @@ export async function runMasterJob(job, inputPath, preset, controls) {
     );
   } catch (error) {
     job.status = "failed";
-    job.error = errorMessage(error);
+    job.error = clientErrorMessage(error, "Mastering failed. Try another audio file or preset.");
     job.message = "Mastering failed";
     job.updatedAt = Date.now();
     job.finishedAt = Date.now();

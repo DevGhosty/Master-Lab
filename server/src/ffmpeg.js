@@ -1,7 +1,15 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { FFMPEG_TIMEOUT_MS } from "./constants.js";
+import {
+  FFMPEG_TIMEOUT_MS,
+  MAX_CHANNELS,
+  MAX_DURATION_SECONDS,
+  MAX_SAMPLE_RATE_HZ,
+  MIN_SAMPLE_RATE_HZ,
+  SUPPORTED_AUDIO_CODECS,
+} from "./constants.js";
+import { PublicError } from "./errors.js";
 import { computePostTrimGainDb } from "./loudnessPolicy.js";
 
 const FFMPEG_GLOBAL = ["-hide_banner", "-threads", "0"];
@@ -52,7 +60,11 @@ export async function ffprobeJson(inputPath) {
     "-show_streams",
     inputPath,
   ]);
-  if (code !== 0) throw new Error(stderr || "ffprobe failed");
+  if (code !== 0) {
+    throw new PublicError("We could not read this as a supported audio file.", {
+      internalMessage: stderr || "ffprobe failed",
+    });
+  }
   return JSON.parse(stdout);
 }
 
@@ -60,7 +72,9 @@ function parseEbur128Summary(stderr) {
   const summaryBlock = stderr.match(/Summary:[\s\S]*?(?=\n\[|$)/i)?.[0];
   if (summaryBlock) {
     const integratedMatch = summaryBlock.match(/Integrated loudness\s*\(I\):\s*([-\d.]+)\s*LUFS/i);
-    const truePeakMatch = summaryBlock.match(/True peak:\s*([-\d.]+)\s*dBTP/i);
+    const truePeakMatch =
+      summaryBlock.match(/True peak:\s*([-\d.]+)\s*dB(?:TP|FS)/i) ||
+      summaryBlock.match(/True peak:[\s\S]*?\bPeak:\s*([-\d.]+)\s*dB(?:TP|FS)/i);
     if (integratedMatch) {
       return {
         input_i: Number(integratedMatch[1]),
@@ -83,10 +97,14 @@ function parseEbur128Summary(stderr) {
   const progressMatches = [...stderr.matchAll(/\bI:\s*([-\d.]+)\s*LUFS/gi)];
   if (progressMatches.length) {
     const last = progressMatches[progressMatches.length - 1];
-    const tpMatches = [...stderr.matchAll(/\bPeak:\s*([-\d.]+)\s*dBTP/gi)];
+    const tpMatches = [
+      ...stderr.matchAll(/\b(?:F?TPK|Peak):\s*((?:\s*[-\d.]+)+)\s*dB(?:TP|FS)/gi),
+    ];
+    const lastTpMatch = tpMatches.length ? tpMatches[tpMatches.length - 1][1].trim().split(/\s+/) : [];
+    const truePeak = lastTpMatch.reduce((max, value) => Math.max(max, Number(value)), -Infinity);
     return {
       input_i: Number(last[1]),
-      input_tp: tpMatches.length ? Number(tpMatches[tpMatches.length - 1][1]) : null,
+      input_tp: Number.isFinite(truePeak) ? truePeak : null,
     };
   }
 
@@ -152,25 +170,68 @@ function reconcilePeakMetrics(stats, loudness) {
 
 function parseClipping(stderr) {
   const clipMatch = stderr.match(/Number of samples clipped:\s*(\d+)/);
-  const totalMatch = stderr.match(/Number of samples:\s*(\d+)/);
-  const clippingSamples = clipMatch ? Number(clipMatch[1]) : 0;
-  const total = totalMatch ? Number(totalMatch[1]) : 1;
+  const totalMatches = [...stderr.matchAll(/(?:Number of samples|Number_of_samples)[=:]\s*([\d.]+)/gi)];
+  let clippingSamples = clipMatch ? Number(clipMatch[1]) : 0;
+  const total = totalMatches.length ? Number(totalMatches[totalMatches.length - 1][1]) : 1;
+  if (!clippingSamples) {
+    const minMatches = [...stderr.matchAll(/(?:Min level|Min_level)[=:]\s*([-\d.]+)/gi)];
+    const maxMatches = [...stderr.matchAll(/(?:Max level|Max_level)[=:]\s*([-\d.]+)/gi)];
+    const absPeakMatches = [...stderr.matchAll(/(?:Abs Peak count|Abs_Peak_count)[=:]\s*([\d.]+)/gi)];
+    const peakMatches = [...stderr.matchAll(/(?:Peak count|Peak_count)[=:]\s*([\d.]+)/gi)];
+    const minLevel = minMatches.length ? Number(minMatches[minMatches.length - 1][1]) : NaN;
+    const maxLevel = maxMatches.length ? Number(maxMatches[maxMatches.length - 1][1]) : NaN;
+    const peakCount = absPeakMatches.length
+      ? Number(absPeakMatches[absPeakMatches.length - 1][1])
+      : peakMatches.length
+        ? Number(peakMatches[peakMatches.length - 1][1])
+        : 0;
+    if ((minLevel <= -32768 || maxLevel >= 32767) && peakCount > 0) {
+      clippingSamples = peakCount;
+    }
+  }
   return { clippingSamples, clippingRatio: clippingSamples / Math.max(1, total) };
 }
 
 function probeFromFfprobe(probe) {
   const audioStream = probe.streams?.find((s) => s.codec_type === "audio");
-  if (!audioStream) throw new Error("No audio stream found");
+  if (!audioStream) throw new PublicError("No audio stream was found in this file.");
   return {
     duration: Number(probe.format?.duration || audioStream.duration || 0),
     channels: Number(audioStream.channels || 1),
     sampleRate: Number(audioStream.sample_rate || 44100),
+    codec: String(audioStream.codec_name || "").toLowerCase(),
+    codecLongName: audioStream.codec_long_name || null,
     bitDepth: audioStream.bits_per_raw_sample
       ? Number(audioStream.bits_per_raw_sample)
       : audioStream.bits_per_sample
         ? Number(audioStream.bits_per_sample)
         : null,
   };
+}
+
+export function validateAudioProbe(probe) {
+  if (!probe || !Number.isFinite(probe.duration) || probe.duration <= 0) {
+    throw new PublicError("We could not measure a playable audio duration for this file.");
+  }
+  if (probe.duration > MAX_DURATION_SECONDS) {
+    throw new PublicError(`File is longer than ${MAX_DURATION_SECONDS} seconds.`);
+  }
+  if (!Number.isFinite(probe.channels) || probe.channels < 1 || probe.channels > MAX_CHANNELS) {
+    throw new PublicError("Only mono or stereo audio files are supported.");
+  }
+  if (
+    !Number.isFinite(probe.sampleRate) ||
+    probe.sampleRate < MIN_SAMPLE_RATE_HZ ||
+    probe.sampleRate > MAX_SAMPLE_RATE_HZ
+  ) {
+    throw new PublicError(`Audio sample rate must be between ${MIN_SAMPLE_RATE_HZ} Hz and ${MAX_SAMPLE_RATE_HZ} Hz.`);
+  }
+  if (!probe.codec || !SUPPORTED_AUDIO_CODECS.has(probe.codec)) {
+    throw new PublicError("This audio codec is not supported yet.", {
+      internalMessage: `Unsupported audio codec: ${probe.codec || "unknown"}`,
+    });
+  }
+  return probe;
 }
 
 function buildAnalysisFromMetrics(metrics, clip, silence, channels, bandMetrics = {}) {
@@ -391,7 +452,11 @@ async function runMetricsPass(inputPath) {
     "null",
     "-",
   ]);
-  if (code !== 0) throw new Error(stderr || "Audio analysis failed");
+  if (code !== 0) {
+    throw new PublicError("Audio analysis failed. Try another export format or a shorter file.", {
+      internalMessage: stderr || "Audio analysis failed",
+    });
+  }
   return {
     loudness: parseEbur128Summary(stderr),
     stats: parsePeakStats(stderr),
@@ -425,7 +490,11 @@ async function runCombinedAnalyzePass(inputPath, peaksRaw) {
     "f32le",
     peaksRaw,
   ]);
-  if (code !== 0) throw new Error(stderr || "Audio analysis failed");
+  if (code !== 0) {
+    throw new PublicError("Audio analysis failed. Try another export format or a shorter file.", {
+      internalMessage: stderr || "Audio analysis failed",
+    });
+  }
   return {
     loudness: parseEbur128Summary(stderr),
     stats: parsePeakStats(stderr),
@@ -436,6 +505,10 @@ async function runCombinedAnalyzePass(inputPath, peaksRaw) {
 
 export async function probeAudioFile(inputPath) {
   return probeFromFfprobe(await ffprobeJson(inputPath));
+}
+
+export async function validateAudioFile(inputPath) {
+  return validateAudioProbe(await probeAudioFile(inputPath));
 }
 
 export async function measureIntegratedLoudness(inputPath) {
@@ -449,19 +522,23 @@ export async function measureIntegratedLoudness(inputPath) {
     "null",
     "-",
   ]);
-  if (code !== 0) throw new Error(stderr || "Loudness measurement failed");
+  if (code !== 0) {
+    throw new PublicError("Loudness measurement failed. Try another export format or a shorter file.", {
+      internalMessage: stderr || "Loudness measurement failed",
+    });
+  }
   return parseEbur128Summary(stderr);
 }
 
 export async function analyzeMetricsOnly(inputPath) {
-  const probe = await probeAudioFile(inputPath);
+  const probe = await validateAudioFile(inputPath);
   const { loudness, stats, clip, silence } = await runMetricsPass(inputPath);
   const metrics = reconcilePeakMetrics(stats, loudness);
   return buildAnalysisFromMetrics(metrics, clip, silence, probe.channels);
 }
 
 export async function analyzeAudioFile(inputPath) {
-  const probe = await probeAudioFile(inputPath);
+  const probe = await validateAudioFile(inputPath);
   const peaksRaw = `${inputPath}.peaks.f32le`;
   const { loudness, stats, clip, silence } = await runCombinedAnalyzePass(inputPath, peaksRaw);
   const metrics = reconcilePeakMetrics(stats, loudness);
@@ -507,7 +584,11 @@ export async function applyGainToFile(filePath, gainDb) {
     `volume=${gainDb.toFixed(2)}dB`,
     tempPath,
   ]);
-  if (code !== 0) throw new Error(stderr || `Gain apply failed for ${path.basename(filePath)}`);
+  if (code !== 0) {
+    throw new PublicError("Could not finish the mastered export safely.", {
+      internalMessage: stderr || `Gain apply failed for ${path.basename(filePath)}`,
+    });
+  }
   await fs.rename(tempPath, filePath);
 }
 
@@ -595,7 +676,11 @@ export async function masterToFiles(inputPath, workDir, filterChain, onProgress,
     "f32le",
     peaksRaw,
   ]);
-  if (code !== 0) throw new Error(stderr || "Mastering failed");
+  if (code !== 0) {
+    throw new PublicError("Mastering failed while rendering the audio. Try another file or preset.", {
+      internalMessage: stderr || "Mastering failed",
+    });
+  }
 
   report(86, "Analyzing master preview");
   let masteredAnalysis = await analyzeMetricsOnly(previewPath);

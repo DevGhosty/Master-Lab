@@ -7,18 +7,21 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  MAX_CHANNELS,
   MAX_ACTIVE_RENDER_TASKS,
-  MAX_DURATION_SECONDS,
   MAX_FILE_SIZE_BYTES,
+  JOB_STALE_MS,
   SYNC_MASTER_MAX_SECONDS,
   SUPPORTED_EXTENSIONS,
+  TEMP_FILE_TTL_MS,
+  UPLOAD_RATE_LIMIT_MAX,
+  UPLOAD_RATE_LIMIT_WINDOW_MS,
   VALID_PRESETS,
 } from "./constants.js";
-import { analyzeAudioFile, masterToFiles, measureIntegratedLoudness, removeDir } from "./ffmpeg.js";
+import { analyzeAudioFile, masterToFiles, measureIntegratedLoudness, removeDir, validateAudioFile } from "./ffmpeg.js";
 import { buildMasterFilter, resolveMasteringTargets } from "./presets.js";
 import { createJob, getJob, runMasterJob, scheduleJobCleanup } from "./jobs.js";
 import { buildAssistantResponse, buildMasterReport } from "./assistant.js";
+import { PublicError, clientErrorMessage, clientErrorStatus, internalErrorMessage } from "./errors.js";
 import {
   createUploadSession,
   getUploadSession,
@@ -34,7 +37,10 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || "http://localhost:8100,http://
   .filter(Boolean);
 const CORS_ALLOW_PLATFORM_HOSTS = process.env.CORS_ALLOW_PLATFORM_HOSTS === "true";
 const CORS_ALLOW_LOCALHOST = process.env.CORS_ALLOW_LOCALHOST !== "false";
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS || 1);
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 let activeRenderTasks = 0;
+const uploadRateBuckets = new Map();
 
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true;
@@ -42,8 +48,8 @@ function isAllowedCorsOrigin(origin) {
   try {
     const { hostname, protocol } = new URL(origin);
     if (protocol !== "http:" && protocol !== "https:") return false;
-    if (CORS_ALLOW_LOCALHOST && (hostname === "localhost" || hostname === "127.0.0.1")) return true;
-    if (!CORS_ALLOW_PLATFORM_HOSTS) return false;
+    if (!IS_PRODUCTION && CORS_ALLOW_LOCALHOST && (hostname === "localhost" || hostname === "127.0.0.1")) return true;
+    if (IS_PRODUCTION || !CORS_ALLOW_PLATFORM_HOSTS) return false;
     if (hostname.endsWith(".onrender.com")) return true;
     if (hostname.endsWith(".hf.space")) return true;
     if (hostname.endsWith(".fly.dev")) return true;
@@ -58,7 +64,7 @@ function requestId() {
 }
 
 function errorMessage(error) {
-  return error?.message || String(error);
+  return internalErrorMessage(error);
 }
 
 function getExtension(fileName = "") {
@@ -68,7 +74,7 @@ function getExtension(fileName = "") {
 
 function isSupportedAudioUpload(file) {
   const ext = getExtension(file.originalname);
-  return file.mimetype?.startsWith("audio/") || SUPPORTED_EXTENSIONS.has(ext);
+  return SUPPORTED_EXTENSIONS.has(ext);
 }
 
 function sizeBucket(bytes = 0) {
@@ -100,6 +106,37 @@ function sendBusy(res) {
   res.status(429).json({ error: "Server is busy. Try again in a moment." });
 }
 
+function clientIp(req) {
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function uploadRateLimit(req, res, next) {
+  const now = Date.now();
+  const ip = clientIp(req);
+  const bucket = uploadRateBuckets.get(ip) || { resetAt: now + UPLOAD_RATE_LIMIT_WINDOW_MS, count: 0 };
+  if (now > bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + UPLOAD_RATE_LIMIT_WINDOW_MS;
+  }
+  bucket.count += 1;
+  uploadRateBuckets.set(ip, bucket);
+
+  if (bucket.count > UPLOAD_RATE_LIMIT_MAX) {
+    const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+    res.setHeader("Retry-After", String(retryAfter));
+    res.status(429).json({ error: "Too many upload requests. Try again shortly." });
+    return;
+  }
+  next();
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, bucket] of uploadRateBuckets) {
+    if (now > bucket.resetAt) uploadRateBuckets.delete(ip);
+  }
+}, Math.max(60_000, Math.min(UPLOAD_RATE_LIMIT_WINDOW_MS, 10 * 60_000))).unref();
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: async (_req, _file, cb) => {
@@ -108,7 +145,7 @@ const upload = multer({
       cb(null, dir);
     },
     filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname) || ".bin";
+      const ext = `.${getExtension(file.originalname) || "bin"}`;
       cb(null, `${randomUUID()}${ext}`);
     },
   }),
@@ -118,11 +155,12 @@ const upload = multer({
       cb(null, true);
       return;
     }
-    cb(new Error("This file type is not supported yet."));
+    cb(new PublicError("This file type is not supported yet."));
   },
 });
 
 const app = express();
+app.set("trust proxy", TRUST_PROXY_HOPS);
 app.use((req, res, next) => {
   req.id = requestId();
   res.setHeader("X-Request-Id", req.id);
@@ -162,16 +200,44 @@ async function cleanupUpload(filePath) {
   if (filePath) await fs.unlink(filePath).catch(() => {});
 }
 
-function validateProbe(probe) {
-  if (probe.duration > MAX_DURATION_SECONDS) {
-    throw new Error(`File is longer than ${MAX_DURATION_SECONDS} seconds`);
+async function cleanupOldTempEntries() {
+  const root = path.join(os.tmpdir(), "master-lab");
+  const now = Date.now();
+  let entries = [];
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch {
+    return;
   }
-  if (probe.channels > MAX_CHANNELS) {
-    throw new Error("Only mono or stereo files are supported");
-  }
+  await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.join(root, entry.name);
+      let stats;
+      try {
+        stats = await fs.stat(entryPath);
+      } catch {
+        return;
+      }
+      const maxAge = entry.name === "uploads" ? TEMP_FILE_TTL_MS : JOB_STALE_MS;
+      if (entry.isDirectory() && entry.name === "uploads") {
+        const files = await fs.readdir(entryPath, { withFileTypes: true }).catch(() => []);
+        await Promise.all(
+          files.map(async (file) => {
+            const filePath = path.join(entryPath, file.name);
+            const fileStats = await fs.stat(filePath).catch(() => null);
+            if (fileStats && now - fileStats.mtimeMs > maxAge) await fs.rm(filePath, { force: true }).catch(() => {});
+          }),
+        );
+        return;
+      }
+      if (entry.isDirectory() && now - stats.mtimeMs > maxAge) {
+        await removeDir(entryPath).catch(() => {});
+      }
+    }),
+  );
 }
 
-app.post("/api/analyze", upload.single("file"), async (req, res) => {
+app.post("/api/analyze", uploadRateLimit, upload.single("file"), async (req, res) => {
   let uploadPath = req.file?.path;
   const startedAt = Date.now();
   let taskAcquired = false;
@@ -185,8 +251,8 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
       return;
     }
     taskAcquired = true;
+    await validateAudioFile(uploadPath);
     const result = await analyzeAudioFile(uploadPath);
-    validateProbe(result.probe);
     const sessionId = createUploadSession(uploadPath, path.extname(req.file.originalname) || ".wav");
     uploadPath = null;
     console.info(
@@ -201,9 +267,11 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error(
       `[analyze] fail request=${req.id} size=${sizeBucket(req.file?.size || 0)} elapsed=${Date.now() - startedAt}ms`,
-      error,
+      internalErrorMessage(error),
     );
-    res.status(400).json({ error: error.message || "Analysis failed" });
+    res.status(clientErrorStatus(error, 400)).json({
+      error: clientErrorMessage(error, "Analysis failed. Try another audio file."),
+    });
   } finally {
     if (taskAcquired) releaseRenderTask();
     if (uploadPath) await cleanupUpload(uploadPath);
@@ -233,7 +301,7 @@ async function streamZip(files, meta, res) {
   await archive.finalize();
 }
 
-app.post("/api/master", upload.single("file"), async (req, res) => {
+app.post("/api/master", uploadRateLimit, upload.single("file"), async (req, res) => {
   const uploadPath = req.file?.path;
   const preset = req.body?.preset || "streaming";
   if (!VALID_PRESETS.has(preset)) {
@@ -262,8 +330,8 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
       return;
     }
     taskAcquired = true;
+    await validateAudioFile(uploadPath);
     const analyzed = await analyzeAudioFile(uploadPath);
-    validateProbe(analyzed.probe);
     if (analyzed.probe.duration > SYNC_MASTER_MAX_SECONDS) {
       res.status(409).json({
         error: "File too long for sync master; use /api/master/jobs",
@@ -313,7 +381,9 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error(`[master] fail request=${req.id} preset=${preset} elapsed=sync error=${errorMessage(error)}`);
     if (!res.headersSent) {
-      res.status(500).json({ error: errorMessage(error) || "Mastering failed" });
+      res.status(clientErrorStatus(error, 500)).json({
+        error: clientErrorMessage(error, "Mastering failed. Try another audio file or use the async render option."),
+      });
     }
   } finally {
     if (taskAcquired) releaseRenderTask();
@@ -322,7 +392,7 @@ app.post("/api/master", upload.single("file"), async (req, res) => {
   }
 });
 
-app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
+app.post("/api/master/jobs", uploadRateLimit, upload.single("file"), async (req, res) => {
   const sessionId = req.body?.sessionId;
   let uploadPath = req.file?.path;
   let ownsUpload = Boolean(uploadPath);
@@ -358,6 +428,7 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
       res.status(400).json({ error: "Missing audio file or sessionId" });
       return;
     }
+    await validateAudioFile(uploadPath);
     if (!acquireRenderTask()) {
       sendBusy(res);
       return;
@@ -388,7 +459,9 @@ app.post("/api/master/jobs", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error(`[master] start fail request=${req.id} preset=${preset} error=${errorMessage(error)}`);
     if (consumedSessionId) await releaseUploadSession(consumedSessionId).catch(() => {});
-    res.status(400).json({ error: errorMessage(error) || "Could not start job" });
+    res.status(clientErrorStatus(error, 400)).json({
+      error: clientErrorMessage(error, "Could not start the mastering job. Try another audio file."),
+    });
   } finally {
     if (taskAcquired) releaseRenderTask();
     if (ownsUpload) await cleanupUpload(uploadPath);
@@ -447,15 +520,24 @@ app.get("/api/jobs/:id/file/:kind", async (req, res) => {
 });
 
 app.use((error, req, res, _next) => {
-  const status = error?.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+  const status = error?.code === "LIMIT_FILE_SIZE" ? 413 : clientErrorStatus(error, 400);
   console.error(`[request] fail request=${req.id} status=${status} error=${errorMessage(error)}`);
   if (!res.headersSent) {
-    res.status(status).json({ error: errorMessage(error) || "Request failed" });
+    const fallback = status === 413 ? "Audio file is too large for this free server." : "Request failed.";
+    res.status(status).json({ error: clientErrorMessage(error, fallback) });
   }
 });
 
 scheduleJobCleanup();
 scheduleSessionCleanup();
+cleanupOldTempEntries().catch((error) => {
+  console.error(`[cleanup] startup fail error=${errorMessage(error)}`);
+});
+setInterval(() => {
+  cleanupOldTempEntries().catch((error) => {
+    console.error(`[cleanup] interval fail error=${errorMessage(error)}`);
+  });
+}, 10 * 60_000).unref();
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`Master Lab API listening on http://${HOST}:${PORT}`);

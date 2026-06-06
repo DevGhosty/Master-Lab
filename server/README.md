@@ -36,6 +36,7 @@ From the repo root:
 ```bash
 npm test
 npm run test:audio
+npm run audit:prod
 ```
 
 Or from `server/`:
@@ -50,6 +51,8 @@ npm run test:audio
 `test:presets` fails if browser and server preset targets, ceilings, default controls, or core DSP intent drift from the shared spec.
 
 The browser LUFS/true-peak meter is an estimate for local-only mode. Initial UI analysis uses the fast true-peak estimator for responsiveness; final browser master validation uses the accurate full-signal estimator before enforcing the ceiling. The FFmpeg `ebur128=peak=true` path is the reference path for server deployments.
+
+`audit:prod` runs `npm audit --omit=dev --audit-level=high` against the deployed dependency set. The upload parser is kept on Multer 2.x; uploaded files are still treated as untrusted until ffprobe confirms a supported audio stream, duration, channel count, sample rate, and codec.
 
 ## Deploy free (no Fly.io credit card)
 
@@ -71,7 +74,7 @@ Uses the repo root [../render.yaml](../render.yaml) and [../Dockerfile](../Docke
 
 **Note:** Free Render instances sleep after ~15 minutes of idle traffic. The first request after sleep may take 30–60 seconds (cold start), then analyze/master are fast.
 
-CORS: set `CORS_ALLOW_PLATFORM_HOSTS=true` (default in `render.yaml`) so `*.onrender.com` is allowed automatically.
+CORS: keep `CORS_ALLOW_PLATFORM_HOSTS=false` and set exact `CORS_ORIGINS`. The API ignores platform-host wildcard CORS while `NODE_ENV=production`, even if `CORS_ALLOW_PLATFORM_HOSTS=true`, so deployed hosts should list the GitHub Pages origin and any custom frontend origins explicitly.
 
 ### Option B — Hugging Face Spaces (recommended free CPU backend)
 
@@ -106,12 +109,17 @@ Only use if you already have Fly billing set up. See [fly.toml](fly.toml).
 | `CORS_ALLOW_PLATFORM_HOSTS` | `false` | Optional wildcard platform CORS; keep false in production and use exact origins |
 | `CORS_ALLOW_LOCALHOST` | `true` | Allow local test origins during development |
 | `MAX_ACTIVE_RENDER_TASKS` | `2` | Limits concurrent FFmpeg analysis/mastering tasks on free hosts |
+| `UPLOAD_RATE_LIMIT_WINDOW_MS` | `600000` | Per-IP upload/analyze/master rate-limit window |
+| `UPLOAD_RATE_LIMIT_MAX` | `20` | Max upload/analyze/master starts per IP per window |
+| `MIN_SAMPLE_RATE_HZ` | `8000` | Lowest accepted probed audio sample rate |
+| `MAX_SAMPLE_RATE_HZ` | `192000` | Highest accepted probed audio sample rate |
 | `FFMPEG_TIMEOUT_MS` | `720000` | Kills stuck FFmpeg/ffprobe work after 12 minutes |
 | `JOB_RESULT_TTL_MS` | `600000` | Keeps completed async job exports available for 10 minutes |
 | `JOB_STALE_MS` | `840000` | Expires abandoned active jobs after the FFmpeg timeout plus a small buffer |
+| `TEMP_FILE_TTL_MS` | `1800000` | Deletes stale temp uploads left by interrupted requests |
 | `OPENAI_API_KEY` | unset | Optional server-only key for AI assistant notes; raw audio is never sent |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Optional AI model name when `OPENAI_API_KEY` is set |
 
 ## Privacy
 
-No database. Uploads and job folders are deleted after the request or TTL. Logs should contain only request id and timing, not audio content.
+No database. Uploads and job folders are deleted after the request or TTL. Logs should contain request id, timing, size/duration buckets, preset, and sanitized internal diagnostics; they should not include original file names, session IDs, audio content, stack traces, or raw command output in client responses.
