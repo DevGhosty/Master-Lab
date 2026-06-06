@@ -121,9 +121,22 @@ export function estimateLoudnessDb(buffer) {
   return gated.length ? energyToLufs(mean(gated)) : preliminary;
 }
 
-// Inter-sample true peak: only oversample around samples that are already loud
-// enough to plausibly produce a reconstruction peak above the sample peak.
-export function estimateTruePeakDb(buffer) {
+// Inter-sample true peak has two modes:
+// - fast: skips low-amplitude sample pairs for responsive upload/UI analysis.
+// - accurate: scans every inter-sample position with a wider windowed-sinc
+//   reconstruction for final master validation and ceiling enforcement.
+export function estimateTruePeakDb(buffer, options = {}) {
+  const mode = options.mode || "fast";
+  if (mode === "accurate") {
+    return estimateTruePeakDbAccurate(buffer, options);
+  }
+  return estimateTruePeakDbFast(buffer, options);
+}
+
+function estimateTruePeakDbFast(buffer, options = {}) {
+  const oversample = options.oversample || TRUE_PEAK_OVERSAMPLE;
+  const radius = options.radius || 8;
+  const scanThreshold = options.scanThreshold ?? 0.25;
   let peak = 0;
   for (let c = 0; c < buffer.numberOfChannels; c += 1) {
     const data = buffer.getChannelData(c);
@@ -132,14 +145,32 @@ export function estimateTruePeakDb(buffer) {
     for (let i = 1; i < data.length; i += 1) {
       const current = data[i];
       peak = Math.max(peak, Math.abs(current));
-      if (Math.max(Math.abs(previous), Math.abs(current)) > 0.25) {
-        for (let j = 1; j < TRUE_PEAK_OVERSAMPLE; j += 1) {
-          const t = j / TRUE_PEAK_OVERSAMPLE;
-          const interpolated = sincInterpolate(data, i - 1 + t, 8);
+      if (Math.max(Math.abs(previous), Math.abs(current)) > scanThreshold) {
+        for (let j = 1; j < oversample; j += 1) {
+          const t = j / oversample;
+          const interpolated = sincInterpolate(data, i - 1 + t, radius);
           peak = Math.max(peak, Math.abs(interpolated));
         }
       }
       previous = current;
+    }
+  }
+  return linearToDb(peak);
+}
+
+function estimateTruePeakDbAccurate(buffer, options = {}) {
+  const oversample = options.oversample || 4;
+  const radius = options.radius || 16;
+  let peak = 0;
+  for (let c = 0; c < buffer.numberOfChannels; c += 1) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < data.length; i += 1) {
+      peak = Math.max(peak, Math.abs(data[i]));
+      if (i >= data.length - 1) continue;
+      for (let j = 1; j < oversample; j += 1) {
+        const interpolated = sincInterpolate(data, i + j / oversample, radius);
+        peak = Math.max(peak, Math.abs(interpolated));
+      }
     }
   }
   return linearToDb(peak);

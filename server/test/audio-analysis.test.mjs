@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { analyzeAudioBuffer } from "../../analysis.js";
+import { analyzeAudioBuffer, estimateTruePeakDb } from "../../analysis.js";
 import { analyzeAudioFile, measureIntegratedLoudness, probeAudioFile, runCommand } from "../src/ffmpeg.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -144,6 +144,11 @@ async function createFixtures() {
     makeChannels(SAMPLE_RATE * 3, sineFrame(15_000, dbToLinear(-1.2))),
   );
 
+  await addFixture(
+    "inter-sample-peak-low-fast-miss",
+    makeChannels(SAMPLE_RATE * 3, sineFrame(12_000, 0.2, Math.PI / 4)),
+  );
+
   return fixtures;
 }
 
@@ -273,8 +278,23 @@ describe("audio analysis fixtures", () => {
   test("inter-sample peak stress fixture raises browser true peak above sample peak", () => {
     const fixture = fixtures["inter-sample-peak"];
     const browser = analyzeAudioBuffer(fixture.buffer);
+    const accurateTruePeakDb = estimateTruePeakDb(fixture.buffer, { mode: "accurate" });
 
     assert.ok(browser.truePeakDb > browser.peakDb, "browser true peak should exceed sample peak");
+    nearly(browser.truePeakDb, accurateTruePeakDb, 0.2, "fast and accurate agree on loud stress fixture");
+  });
+
+  test("accurate true-peak mode catches full-signal inter-sample peaks fast mode can miss", () => {
+    const fixture = fixtures["inter-sample-peak-low-fast-miss"];
+    const browser = analyzeAudioBuffer(fixture.buffer);
+    const fastTruePeakDb = estimateTruePeakDb(fixture.buffer, { mode: "fast" });
+    const accurateTruePeakDb = estimateTruePeakDb(fixture.buffer, { mode: "accurate" });
+
+    assert.equal(browser.truePeakDb, fastTruePeakDb, "public analysis metric keeps using fast mode");
+    assert.ok(
+      accurateTruePeakDb - fastTruePeakDb > 2.5,
+      `expected accurate mode to exceed fast mode by >2.5 dB, got fast=${fastTruePeakDb}, accurate=${accurateTruePeakDb}`,
+    );
   });
 
   test("inter-sample peak stress fixture stays close to FFmpeg true-peak reference", async (t) => {

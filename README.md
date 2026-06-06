@@ -66,7 +66,7 @@ npm run test:audio
 
 The tests generate small synthetic WAV fixtures at runtime for silence, a known-peak sine, clipped audio, stereo phase/correlation, leading/trailing silence, and an inter-sample peak stress case. Browser-side LUFS and true-peak logic is tested with deterministic JavaScript fixtures. When `ffmpeg` is installed on `PATH`, the suite also compares the browser estimates against the server FFmpeg `ebur128=peak=true` reference path with tight tolerances. If local FFmpeg is unavailable, the FFmpeg-backed reference tests are skipped and the browser estimator tests still run.
 
-The browser meter is an estimate designed for fast local-only mode. The server FFmpeg path is the reference path for deployment and quality checks.
+The browser meter is an estimate designed for fast local-only mode. Initial UI analysis uses the fast true-peak estimator for responsiveness. Final browser mastering validation uses the accurate full-signal estimator before enforcing the selected ceiling. The server FFmpeg path is the reference path for deployment and quality checks.
 
 ## Repository layout
 

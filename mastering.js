@@ -224,7 +224,7 @@ function buildMasteringSettings(analysis, controls) {
 
 function finalizeMaster(buffer, targetLoudness, ceilingDb, sourceLoudnessDb) {
   const loudness = estimateLoudnessDb(buffer);
-  const truePeakDb = estimateTruePeakDb(buffer);
+  const truePeakDb = estimateTruePeakDb(buffer, { mode: "accurate" });
   const desiredGainDb = computeFinalizeGainDb({
     loudnessDb: loudness,
     targetLoudness,
@@ -235,7 +235,7 @@ function finalizeMaster(buffer, targetLoudness, ceilingDb, sourceLoudnessDb) {
   const gained = applyGain(buffer, dbToLinear(desiredGainDb));
   const limited = lookaheadLimit(gained, ceilingDb, 7, 140);
   const validated = normalizeToCeiling(limited, ceilingDb);
-  const postTruePeakDb = estimateTruePeakDb(validated);
+  const postTruePeakDb = estimateTruePeakDb(validated, { mode: "accurate" });
   if (postTruePeakDb > ceilingDb) {
     return applyGain(validated, dbToLinear(ceilingDb - postTruePeakDb));
   }
@@ -243,7 +243,7 @@ function finalizeMaster(buffer, targetLoudness, ceilingDb, sourceLoudnessDb) {
 }
 
 function normalizeToCeiling(buffer, ceilingDb) {
-  const peak = dbToLinear(estimateTruePeakDb(buffer));
+  const peak = dbToLinear(estimateTruePeakDb(buffer, { mode: "accurate" }));
   const target = dbToLinear(ceilingDb);
   const gain = peak > 0 ? Math.min(target / peak, 1) : 1;
   return applyGain(buffer, gain);

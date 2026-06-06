@@ -45,7 +45,7 @@ npm run test:audio
 
 `test:audio` generates repeatable synthetic WAV fixtures and validates silence, clipping, stereo phase/correlation, leading/trailing silence, waveform peaks, LUFS, and true peak. Browser-side analysis is always tested. FFmpeg-backed server/reference comparisons run when `ffmpeg` is installed on `PATH`; otherwise those reference cases are skipped with a clear message.
 
-The browser LUFS/true-peak meter is an estimate for local-only mode. The FFmpeg `ebur128=peak=true` path is the reference path for server deployments.
+The browser LUFS/true-peak meter is an estimate for local-only mode. Initial UI analysis uses the fast true-peak estimator for responsiveness; final browser master validation uses the accurate full-signal estimator before enforcing the ceiling. The FFmpeg `ebur128=peak=true` path is the reference path for server deployments.
 
 ## Deploy free (no Fly.io credit card)
 
