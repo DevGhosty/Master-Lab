@@ -98,6 +98,34 @@ function mergeAnalysisMetrics(base, incoming) {
   return normalizeAnalysisMetrics(merged);
 }
 
+function appendMasterControls(form, controls) {
+  form.append("preset", state.selectedPreset);
+  form.append("intensity", String(controls.intensity));
+  form.append("warmth", String(controls.warmth));
+  form.append("air", String(controls.air));
+  form.append("trimSilence", controls.trimSilence ? "true" : "false");
+  if (Number.isFinite(controls.targetLoudness)) {
+    form.append("targetLoudness", String(controls.targetLoudness));
+  }
+  if (Number.isFinite(controls.ceilingDb)) {
+    form.append("ceilingDb", String(controls.ceilingDb));
+  }
+  if (Number.isFinite(state.analysis?.loudnessDb)) {
+    form.append("sourceLoudnessDb", String(state.analysis.loudnessDb));
+  }
+}
+
+function buildMasterJobForm(controls, useSession) {
+  const form = new FormData();
+  if (useSession && state.apiSessionId) {
+    form.append("sessionId", state.apiSessionId);
+  } else {
+    form.append("file", state.file);
+  }
+  appendMasterControls(form, controls);
+  return form;
+}
+
 async function fetchAssistant(payload) {
   if (!isApiMode()) return null;
   try {
@@ -382,38 +410,32 @@ export async function runMasteringViaApi() {
 
   try {
     const controls = readControls();
-    const form = new FormData();
     if (state.apiSessionId) {
-      form.append("sessionId", state.apiSessionId);
       setStatus(COPY.status.masteringInProgress);
       setProgress("prepare", 52, "Starting master job");
     } else {
       setStatus("Uploading file for mastering… Large tracks may take 1–2 minutes before processing starts.");
       setProgress("prepare", 52, "Uploading for master");
-      form.append("file", state.file);
     }
     await nextFrame();
 
-    form.append("preset", state.selectedPreset);
-    form.append("intensity", String(controls.intensity));
-    form.append("warmth", String(controls.warmth));
-    form.append("air", String(controls.air));
-    form.append("trimSilence", controls.trimSilence ? "true" : "false");
-    if (Number.isFinite(controls.targetLoudness)) {
-      form.append("targetLoudness", String(controls.targetLoudness));
-    }
-    if (Number.isFinite(controls.ceilingDb)) {
-      form.append("ceilingDb", String(controls.ceilingDb));
-    }
-    if (Number.isFinite(state.analysis?.loudnessDb)) {
-      form.append("sourceLoudnessDb", String(state.analysis.loudnessDb));
-    }
-
-    const startResponse = await fetchWithTimeout(`${getApiBase()}/api/master/jobs`, {
+    let startResponse = await fetchWithTimeout(`${getApiBase()}/api/master/jobs`, {
       method: "POST",
-      body: form,
+      body: buildMasterJobForm(controls, Boolean(state.apiSessionId)),
     }, API_MASTER_START_TIMEOUT_MS);
-    const startPayload = await startResponse.json();
+    let startPayload = await startResponse.json();
+
+    if (!startResponse.ok && startResponse.status === 404 && state.apiSessionId) {
+      state.apiSessionId = null;
+      setStatus("Session expired on the server; uploading file for mastering...");
+      setProgress("prepare", 54, "Uploading for master");
+      await nextFrame();
+      startResponse = await fetchWithTimeout(`${getApiBase()}/api/master/jobs`, {
+        method: "POST",
+        body: buildMasterJobForm(controls, false),
+      }, API_MASTER_START_TIMEOUT_MS);
+      startPayload = await startResponse.json();
+    }
 
     if (!startResponse.ok) {
       throw new Error(startPayload.error || "Could not start mastering job");
