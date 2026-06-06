@@ -27,6 +27,26 @@ Point the static UI at the API by setting `window.MASTER_LAB_API` in [../config.
 | GET | `/api/jobs/:id/download` | ZIP of all exports |
 | GET | `/api/jobs/:id/file/:kind` | Single file (`preview`, `wav32`, `wav24`, `wav16`, `mp3`) |
 
+## Tests
+
+From the repo root:
+
+```bash
+npm test
+npm run test:audio
+```
+
+Or from `server/`:
+
+```bash
+npm test
+npm run test:audio
+```
+
+`test:audio` generates repeatable synthetic WAV fixtures and validates silence, clipping, stereo phase/correlation, leading/trailing silence, waveform peaks, LUFS, and true peak. Browser-side analysis is always tested. FFmpeg-backed server/reference comparisons run when `ffmpeg` is installed on `PATH`; otherwise those reference cases are skipped with a clear message.
+
+The browser LUFS/true-peak meter is an estimate for local-only mode. The FFmpeg `ebur128=peak=true` path is the reference path for server deployments.
+
 ## Deploy free (no Fly.io credit card)
 
 ### Option A — Render (recommended)

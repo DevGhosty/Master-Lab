@@ -10,3 +10,4 @@ Thumbs.db
 *.m4a
 *.ogg
 server/node_modules/
+server/test/.generated-audio/

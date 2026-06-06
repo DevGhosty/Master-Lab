@@ -50,6 +50,24 @@ All processing is designed to stay on your machine when the app runs in **local 
 - Max length: 15 minutes  
 - LUFS and true peak are useful estimates, not certified broadcast meters  
 
+## Audio Analysis Tests
+
+Run the full local test suite from the repo root:
+
+```bash
+npm test
+```
+
+Run only the audio-analysis fixtures:
+
+```bash
+npm run test:audio
+```
+
+The tests generate small synthetic WAV fixtures at runtime for silence, a known-peak sine, clipped audio, stereo phase/correlation, leading/trailing silence, and an inter-sample peak stress case. Browser-side LUFS and true-peak logic is tested with deterministic JavaScript fixtures. When `ffmpeg` is installed on `PATH`, the suite also compares the browser estimates against the server FFmpeg `ebur128=peak=true` reference path with tight tolerances. If local FFmpeg is unavailable, the FFmpeg-backed reference tests are skipped and the browser estimator tests still run.
+
+The browser meter is an estimate designed for fast local-only mode. The server FFmpeg path is the reference path for deployment and quality checks.
+
 ## Repository layout
 
 - `index.html`, `styles.css`, `app.js` — application UI and logic  
