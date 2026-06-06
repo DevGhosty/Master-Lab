@@ -49,6 +49,8 @@ import { disableExports, enableDownload } from "./export.js";
 let serverStatus = "unknown";
 let statusPollTimer = null;
 let wakeInProgress = false;
+const JOB_REPLICA_RETRY_ATTEMPTS = 12;
+const JOB_REPLICA_RETRY_BASE_MS = 500;
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -124,6 +126,14 @@ function buildMasterJobForm(controls, useSession) {
   }
   appendMasterControls(form, controls);
   return form;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function replicaRetryDelay(attempt) {
+  return JOB_REPLICA_RETRY_BASE_MS + attempt * 250;
 }
 
 async function fetchAssistant(payload) {
@@ -449,17 +459,10 @@ export async function runMasteringViaApi() {
     let pollCount = 0;
     while (job.status === "queued" || job.status === "processing") {
       if (pollCount > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 800));
+        await wait(800);
       }
       pollCount += 1;
-      const statusResponse = await fetchWithTimeout(`${getApiBase()}/api/jobs/${state.masterJobId}`);
-      job = await statusResponse.json();
-      if (!statusResponse.ok) {
-        if (statusResponse.status === 404) {
-          throw new Error(COPY.errors.masterJobLost);
-        }
-        throw new Error(job.error || "Job status failed");
-      }
+      job = await fetchJobStatus(state.masterJobId);
       const stepPercent = Math.min(90, 55 + Math.round((job.progress || 0) * 0.35));
       const progressStep = job.progress >= 84 ? "preview" : job.progress >= 25 ? "apply" : "prepare";
       setProgress(progressStep, stepPercent, job.message || "Processing on server");
@@ -558,15 +561,36 @@ export async function runMasteringViaApi() {
   }
 }
 
-async function fetchJobFileBlob(jobId, kind) {
-  const response = await fetchWithTimeout(
-    `${getApiBase()}/api/jobs/${jobId}/file/${kind}`,
-    {},
-    API_MASTER_DOWNLOAD_TIMEOUT_MS,
-  );
-  if (!response.ok) {
+async function fetchJobStatus(jobId) {
+  let lastPayload = null;
+  for (let attempt = 0; attempt < JOB_REPLICA_RETRY_ATTEMPTS; attempt += 1) {
+    const response = await fetchWithTimeout(`${getApiBase()}/api/jobs/${jobId}`);
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || `Could not download ${kind}`);
+    if (response.ok) return payload;
+    lastPayload = payload;
+    if (response.status !== 404) {
+      throw new Error(payload.error || "Job status failed");
+    }
+    await wait(replicaRetryDelay(attempt));
   }
-  return response.blob();
+  throw new Error(lastPayload?.error || COPY.errors.masterJobLost);
+}
+
+async function fetchJobFileBlob(jobId, kind) {
+  let lastPayload = null;
+  for (let attempt = 0; attempt < JOB_REPLICA_RETRY_ATTEMPTS; attempt += 1) {
+    const response = await fetchWithTimeout(
+      `${getApiBase()}/api/jobs/${jobId}/file/${kind}`,
+      {},
+      API_MASTER_DOWNLOAD_TIMEOUT_MS,
+    );
+    if (response.ok) return response.blob();
+    lastPayload = await response.json().catch(() => ({}));
+    if (response.status !== 404) {
+      throw new Error(lastPayload.error || `Could not download ${kind}`);
+    }
+    setStatus(`Finding rendered ${kind} file...`);
+    await wait(replicaRetryDelay(attempt));
+  }
+  throw new Error(lastPayload?.error || `Could not download ${kind}`);
 }
