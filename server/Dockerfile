@@ -15,14 +15,15 @@ ENV HOME=/home/node \
   JOB_RESULT_TTL_MS=600000 \
   JOB_STALE_MS=840000
 
-RUN mkdir -p /home/node/app /home/node/.npm \
+RUN mkdir -p /home/node/app/server /home/node/.npm \
   && chown -R node:node /home/node
 
-WORKDIR /home/node/app
-COPY --chown=node:node package.json package-lock.json* ./
+WORKDIR /home/node/app/server
+COPY --chown=node:node server/package.json server/package-lock.json* ./
 USER node
 RUN npm ci --omit=dev --no-audit --ignore-scripts
-COPY --chown=node:node src ./src
+COPY --chown=node:node server/src ./src
+COPY --chown=node:node presetSpec.js ../presetSpec.js
 
 EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 7860) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"

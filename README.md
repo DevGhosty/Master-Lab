@@ -28,6 +28,8 @@ Master Lab is a free, browser-based audio mastering tool. Upload a track, review
 
 All processing is designed to stay on your machine when the app runs in **local mode**. When a server API URL is configured for the hosted build, analyze and master run on that server instead; audio is processed in temporary storage and not kept after the job finishes.
 
+Browser and server masters are not bit-identical because Web Audio and FFmpeg use different DSP engines. They share one preset spec for loudness targets, ceilings, default tone controls, EQ frequencies, compressor intent, limiter timing, and special preset behavior.
+
 ## Technical overview
 
 | Area | Implementation |
@@ -36,7 +38,7 @@ All processing is designed to stay on your machine when the app runs in **local 
 | Decode & playback | Web Audio API (`AudioContext`, `decodeAudioData`) |
 | Analysis | In-browser BS.1770-style integrated LUFS (K-weighting, gating), oversampled true-peak estimate, band balance, DC offset, silence and clipping heuristics |
 | Mastering (local) | `OfflineAudioContext` chain: high-pass, shelves/peaking EQ, light waveshaper saturation, bus compression, loudness-aware gain, lookahead peak limiter, ceiling normalize |
-| Mastering (server) | Optional Node API with FFmpeg/ffprobe; preset-mapped filter graphs (not bit-identical to the browser chain) |
+| Mastering (server) | Optional Node API with FFmpeg/ffprobe; FFmpeg filter graphs share the same preset spec as the browser chain |
 | Assistant | Local deterministic guidance; optional server AI endpoint receives analysis/report JSON only, never raw audio |
 | MP3 (local) | Bundled [lamejs](https://github.com/zhuker/lamejs) 1.2.1 (`vendor/lame.min.js`), encode in a Web Worker when supported |
 | Exports (local) | WAV encoders in JS; MP3 via lamejs |
@@ -71,6 +73,7 @@ The browser meter is an estimate designed for fast local-only mode. Initial UI a
 ## Repository layout
 
 - `index.html`, `styles.css`, `app.js` — application UI and logic  
+- `presetSpec.js` — shared browser/server mastering preset source of truth
 - `vendor/lame.min.js` — MP3 encoder (local mode)  
 - `mp3-worker.js` — background MP3 encoding  
 - `config.js` — optional API base URL for server-backed mode on the hosted site  

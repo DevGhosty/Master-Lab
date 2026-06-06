@@ -10,8 +10,9 @@
     "dev": "node --watch src/index.js",
     "check": "node --check src/index.js && node --check src/ffmpeg.js && node --check src/assistant.js && node --check src/jobs.js && node --check src/sessions.js",
     "smoke": "node -e \"import('./src/presets.js').then(({ PRESETS, buildMasterFilter }) => { for (const key of Object.keys(PRESETS)) buildMasterFilter(key); console.log('preset filters ok'); })\"",
-    "test": "npm run check && npm run smoke && npm run test:audio",
-    "test:audio": "node --test test/audio-analysis.test.mjs"
+    "test": "npm run check && npm run smoke && npm run test:presets && npm run test:audio",
+    "test:audio": "node --test test/audio-analysis.test.mjs",
+    "test:presets": "node --test test/preset-spec.test.mjs"
   },
   "engines": {
     "node": ">=20 <25"

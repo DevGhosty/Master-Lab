@@ -2,6 +2,8 @@
 
 Ephemeral FFmpeg server for fast analyze + master. Audio is written to a temp directory, processed, returned to the client, then deleted (job artifacts expire after 10 minutes).
 
+The FFmpeg chain consumes the shared root `presetSpec.js` file. Server and browser masters are not bit-identical, but they use the same preset targets, ceilings, default tone controls, EQ frequencies, compressor intent, limiter timing, and special preset behavior.
+
 ## Run locally
 
 Requires **FFmpeg** and **ffprobe** on your PATH.
@@ -44,6 +46,8 @@ npm run test:audio
 ```
 
 `test:audio` generates repeatable synthetic WAV fixtures and validates silence, clipping, stereo phase/correlation, leading/trailing silence, waveform peaks, LUFS, and true peak. Browser-side analysis is always tested. FFmpeg-backed server/reference comparisons run when `ffmpeg` is installed on `PATH`; otherwise those reference cases are skipped with a clear message.
+
+`test:presets` fails if browser and server preset targets, ceilings, default controls, or core DSP intent drift from the shared spec.
 
 The browser LUFS/true-peak meter is an estimate for local-only mode. Initial UI analysis uses the fast true-peak estimator for responsiveness; final browser master validation uses the accurate full-signal estimator before enforcing the ceiling. The FFmpeg `ebur128=peak=true` path is the reference path for server deployments.
 

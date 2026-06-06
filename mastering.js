@@ -7,6 +7,7 @@ import {
   computePreGainDb,
   isEnhancementOnlyMode,
 } from "./loudnessPolicy.js";
+import { resolvePresetSpec } from "./presetSpec.js";
 import { clamp, dbToLinear, linearToDb } from "./utils.js";
 
 function makeWaveShaperCurve(amount) {
@@ -76,7 +77,7 @@ export async function masterBuffer(inputBuffer, controls) {
   const lowMid = offline.createBiquadFilter();
   lowMid.type = "peaking";
   lowMid.frequency.value = dsp.mudCutHz;
-  lowMid.Q.value = 0.82;
+  lowMid.Q.value = dsp.mudCutQ;
   lowMid.gain.value = dsp.mudCutDb;
 
   const highShelf = offline.createBiquadFilter();
@@ -87,7 +88,7 @@ export async function masterBuffer(inputBuffer, controls) {
   const presenceTame = offline.createBiquadFilter();
   presenceTame.type = "peaking";
   presenceTame.frequency.value = dsp.presenceTameHz;
-  presenceTame.Q.value = 1.15;
+  presenceTame.Q.value = dsp.presenceTameQ;
   presenceTame.gain.value = dsp.presenceTameDb;
 
   const toneTrim = offline.createGain();
@@ -111,7 +112,7 @@ export async function masterBuffer(inputBuffer, controls) {
 
   const compressor = offline.createDynamicsCompressor();
   compressor.threshold.value = dsp.compressorThresholdDb;
-  compressor.knee.value = 20;
+  compressor.knee.value = dsp.compressorKneeDb;
   compressor.ratio.value = dsp.compressorRatio;
   compressor.attack.value = dsp.attackSeconds;
   compressor.release.value = dsp.releaseSeconds;
@@ -121,8 +122,8 @@ export async function masterBuffer(inputBuffer, controls) {
 
   const deHarsh = offline.createBiquadFilter();
   deHarsh.type = "lowpass";
-  deHarsh.frequency.value = 19000;
-  deHarsh.Q.value = 0.35;
+  deHarsh.frequency.value = dsp.deHarshLowpassHz;
+  deHarsh.Q.value = dsp.deHarshQ;
 
   // Conservative mastering chain: broad tone shaping first, tiny trim for EQ
   // boosts, then split loudness gain so quiet mixes rise without overdriving
@@ -144,7 +145,7 @@ export async function masterBuffer(inputBuffer, controls) {
 
   source.start(0);
   const rendered = await offline.startRendering();
-  return finalizeMaster(rendered, dsp.targetLoudness, dsp.ceilingDb, sourceAnalysis.loudnessDb);
+  return finalizeMaster(rendered, dsp, sourceAnalysis.loudnessDb);
 }
 
 export function getAdaptiveTarget(preset) {
@@ -157,6 +158,8 @@ export function getAdaptiveCeiling(preset) {
 }
 
 function buildMasteringSettings(analysis, controls) {
+  const presetSpec = resolvePresetSpec(controls.presetKey);
+  const { eq, compressor: comp, saturation, gainStage } = presetSpec.dsp;
   const intensity = controls.intensity;
   const warmth = controls.warmth;
   const air = controls.air;
@@ -195,49 +198,65 @@ function buildMasteringSettings(analysis, controls) {
     0,
     0.55,
   );
-  const makeupMaxDb = enhancementOnly ? 0.85 : 1.6;
+  const makeupMaxDb = enhancementOnly ? gainStage.enhancementMakeupMaxDb : gainStage.normalMakeupMaxDb;
 
   return {
     targetLoudness: controls.targetLoudness,
     ceilingDb: controls.ceilingDb,
-    highPassHz: lowRatioDb > -7 ? 34 : 26,
-    lowShelfHz: 90,
+    highPassHz: lowRatioDb > -7 ? eq.hotLowEndHighPassHz : eq.bassHighPassHz,
+    lowShelfHz: eq.lowShelfHz,
     lowShelfDb,
-    mudCutHz: controls.bass > 0.25 ? 245 : 285,
+    mudCutHz: controls.bass > 0.25 ? eq.bassMudCutHz : eq.mudCutHz,
+    mudCutQ: eq.mudCutQ,
     mudCutDb,
-    highShelfHz: 8800,
+    highShelfHz: eq.highShelfHz,
     airDb,
-    presenceTameHz: 4500,
+    presenceTameHz: eq.presenceTameHz,
+    presenceTameQ: eq.presenceTameQ,
     presenceTameDb,
+    deHarshLowpassHz: eq.deHarshLowpassHz,
+    deHarshQ: eq.deHarshQ,
     toneTrimDb,
-    preGainDb: computePreGainDb(loudnessGap, enhancementOnly),
-    saturationDrive: 1 + intensity * 0.12,
-    saturationTrimDb: -0.04 - intensity * 0.08,
-    saturationWet: clamp(intensity * 0.06, 0, 0.055),
-    compressorThresholdDb: clamp(rmsDb + 8.5 - intensity * (enhancementOnly ? 1.4 : 2.1), -19, -10.5),
-    compressorRatio: enhancementOnly ? 1.18 + intensity * 0.38 : 1.2 + intensity * 0.5,
-    attackSeconds: 0.032,
-    releaseSeconds: 0.18 + clamp((crestDb - 11) * 0.007, -0.025, 0.06),
+    preGainDb: computePreGainDb(loudnessGap, enhancementOnly, {
+      share: gainStage.browserPreGainShare,
+      maxPreGainDb: gainStage.maxPreGainDb,
+    }),
+    saturationDrive: saturation.driveBase + intensity * saturation.driveIntensity,
+    saturationTrimDb: saturation.trimBaseDb + intensity * saturation.trimIntensityDb,
+    saturationWet: clamp(intensity * saturation.wetIntensity, 0, saturation.maxWet),
+    compressorThresholdDb: clamp(
+      rmsDb + comp.thresholdBaseDb - intensity * (enhancementOnly ? comp.enhancementIntensityDb : comp.normalIntensityDb),
+      comp.minThresholdDb,
+      comp.maxThresholdDb,
+    ),
+    compressorRatio: enhancementOnly
+      ? comp.enhancementBaseRatio + intensity * comp.enhancementIntensityRatio
+      : comp.normalBaseRatio + intensity * comp.normalIntensityRatio,
+    compressorKneeDb: comp.kneeDb,
+    attackSeconds: comp.attackMs / 1000,
+    releaseSeconds: comp.releaseMs / 1000 + clamp((crestDb - 11) * 0.007, -0.025, 0.06),
     makeupGainDb: clamp(0.25 + intensity * 0.7 + Math.max(0, loudnessGap) * 0.035, 0.05, makeupMaxDb),
+    limiterAttackMs: presetSpec.dsp.limiter.attackMs,
+    limiterReleaseMs: presetSpec.dsp.limiter.releaseMs,
   };
 }
 
-function finalizeMaster(buffer, targetLoudness, ceilingDb, sourceLoudnessDb) {
+function finalizeMaster(buffer, dsp, sourceLoudnessDb) {
   const loudness = estimateLoudnessDb(buffer);
   const truePeakDb = estimateTruePeakDb(buffer, { mode: "accurate" });
   const desiredGainDb = computeFinalizeGainDb({
     loudnessDb: loudness,
-    targetLoudness,
-    ceilingDb,
+    targetLoudness: dsp.targetLoudness,
+    ceilingDb: dsp.ceilingDb,
     truePeakDb,
     sourceLoudnessDb,
   });
   const gained = applyGain(buffer, dbToLinear(desiredGainDb));
-  const limited = lookaheadLimit(gained, ceilingDb, 7, 140);
-  const validated = normalizeToCeiling(limited, ceilingDb);
+  const limited = lookaheadLimit(gained, dsp.ceilingDb, dsp.limiterAttackMs, dsp.limiterReleaseMs);
+  const validated = normalizeToCeiling(limited, dsp.ceilingDb);
   const postTruePeakDb = estimateTruePeakDb(validated, { mode: "accurate" });
-  if (postTruePeakDb > ceilingDb) {
-    return applyGain(validated, dbToLinear(ceilingDb - postTruePeakDb));
+  if (postTruePeakDb > dsp.ceilingDb) {
+    return applyGain(validated, dbToLinear(dsp.ceilingDb - postTruePeakDb));
   }
   return validated;
 }

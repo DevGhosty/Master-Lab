@@ -2,14 +2,6 @@ import { PRESETS } from "./presets.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-const PRESET_LABELS = {
-  balanced: "Balanced",
-  loud: "Loud",
-  warm: "Warm",
-  bright: "Bright",
-  bass: "Bass Boost",
-  streaming: "Streaming Ready",
-};
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -73,7 +65,7 @@ function localAssistant(payload) {
     summary: payload.stage === "mastered" && payload.report?.summary ? payload.report.summary : rec.reason,
     rationale: "Generated from measured loudness, true peak, crest factor, tonal balance, and source warnings.",
     notes: [
-      `Recommended goal: ${PRESET_LABELS[rec.presetKey] || rec.presetKey}.`,
+      `Recommended goal: ${PRESETS[rec.presetKey]?.label || rec.presetKey}.`,
       `Suggested intensity ceiling: ${Math.round(cap * 100)}%.`,
       Number.isFinite(analysis.mudRatioDb) && analysis.mudRatioDb > -6.5
         ? "Low mids look dense; keep bass boosts conservative."

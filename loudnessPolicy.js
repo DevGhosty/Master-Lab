@@ -38,9 +38,11 @@ export function computePreserveGainDb(measuredLufs, effectiveTargetLufs) {
   return clamp(Math.max(0, effectiveTargetLufs - measuredLufs), 0, 4.5);
 }
 
-export function computePreGainDb(loudnessGap, enhancementOnly = false) {
+export function computePreGainDb(loudnessGap, enhancementOnly = false, options = {}) {
   if (enhancementOnly) return 0;
-  return clamp(Math.max(0, loudnessGap * 0.22), 0, 2.2);
+  const share = options.share ?? 0.22;
+  const maxPreGainDb = options.maxPreGainDb ?? 2.2;
+  return clamp(Math.max(0, loudnessGap * share), 0, maxPreGainDb);
 }
 
 export function computeFinalizeGainDb({
