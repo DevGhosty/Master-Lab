@@ -64,6 +64,7 @@ export const els = {
   progressFill: document.querySelector("#progressFill"),
   progressSteps: Array.from(document.querySelectorAll("#progressSteps li")),
   masterButton: document.querySelector("#masterButton"),
+  cancelLocalButton: document.querySelector("#cancelLocalButton"),
   trackTitle: document.querySelector("#trackTitle"),
   trackDetails: document.querySelector("#trackDetails"),
   originalTab: document.querySelector("#originalTab"),

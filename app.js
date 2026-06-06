@@ -16,9 +16,10 @@ import {
 } from "./utils.js";
 import { PRESETS } from "./presets.js";
 import { state, getAudioContext, cleanupUrls } from "./state.js";
-import { analyzeAudioBuffer, buildWarnings, getReadiness, parseBitDepth, hasAudibleSignal } from "./analysis.js";
+import { buildWarnings, getReadiness, parseBitDepth, hasAudibleSignal } from "./analysis.js";
 import { buildMixAssistant, buildMasterReport } from "./assistant.js";
 import { masterBuffer } from "./mastering.js";
+import { analyzeBufferLocally, cancelLocalAudioWork, LocalJobCancelled } from "./localAudio.js";
 import {
   els,
   setStatus,
@@ -67,6 +68,54 @@ import {
 } from "./export.js";
 import { loadFileViaApi, runMasteringViaApi, startServerStatusMonitor, stopServerStatusMonitor, wakeServer } from "./api.js";
 
+function beginLocalJob(label) {
+  cancelLocalJob(false);
+  const controller = new AbortController();
+  const job = {
+    id: state.localJobSeq + 1,
+    label,
+    controller,
+  };
+  state.localJobSeq = job.id;
+  state.localJob = job;
+  if (els.cancelLocalButton) {
+    els.cancelLocalButton.hidden = false;
+    els.cancelLocalButton.disabled = false;
+  }
+  return job;
+}
+
+function finishLocalJob(job) {
+  if (state.localJob?.id !== job.id) return;
+  state.localJob = null;
+  if (els.cancelLocalButton) {
+    els.cancelLocalButton.hidden = true;
+    els.cancelLocalButton.disabled = false;
+  }
+}
+
+function ensureLocalJobActive(job) {
+  if (state.localJob?.id !== job.id || job.controller.signal.aborted) {
+    throw new LocalJobCancelled();
+  }
+}
+
+function cancelLocalJob(showStatus = true) {
+  if (!state.localJob) return;
+  state.localJob.controller.abort();
+  state.localJob = null;
+  cancelLocalAudioWork();
+  disposeMp3Worker();
+  if (els.cancelLocalButton) {
+    els.cancelLocalButton.hidden = true;
+    els.cancelLocalButton.disabled = false;
+  }
+  if (showStatus) {
+    setStatus("Local processing cancelled.");
+    setProgress("analyze", 0, "Cancelled");
+  }
+}
+
 async function loadFile(file) {
   resetSession(false);
   clearStatusBanner();
@@ -91,14 +140,17 @@ async function loadFile(file) {
   setAppPhase("loaded");
   setStatus("Uploading audio...");
   setProgress("analyze", 12, "Uploading audio");
+  const localJob = beginLocalJob("analysis");
 
   try {
     const arrayBuffer = await file.arrayBuffer();
+    ensureLocalJobActive(localJob);
     state.bitDepth = parseBitDepth(arrayBuffer);
-    setStatus("Analyzing original file...");
-    setProgress("analyze", 30, "Analyzing original file");
+    setStatus("Decoding audio...");
+    setProgress("analyze", 24, "Decoding started");
 
     const decoded = await getAudioContext().decodeAudioData(arrayBuffer.slice(0));
+    ensureLocalJobActive(localJob);
     if (!decoded.duration || decoded.length === 0) {
       renderDecodeError(file, "No usable audio was detected in this file.");
       return;
@@ -111,12 +163,22 @@ async function loadFile(file) {
       renderDecodeError(file, "This prototype currently supports mono or stereo files. Export a stereo WAV or MP3 and upload again.");
       return;
     }
-    const analysis = analyzeAudioBuffer(decoded);
+    setStatus("Analyzing original file...");
+    setProgress("analyze", 32, "Analysis running");
+    const { analysis, waveformPeaks } = await analyzeBufferLocally(decoded, {
+      signal: localJob.controller.signal,
+      onProgress({ progress, message }) {
+        setProgress("analyze", progress, message);
+        setStatus(message);
+      },
+    });
+    ensureLocalJobActive(localJob);
     const warnings = buildWarnings(file, decoded, analysis);
     const readiness = getReadiness(warnings, analysis);
 
     state.originalBuffer = decoded;
     state.analysis = analysis;
+    state.originalWaveformPeaks = waveformPeaks;
     state.originalUrl = URL.createObjectURL(file);
 
     els.originalPlayer.src = state.originalUrl;
@@ -143,8 +205,15 @@ async function loadFile(file) {
     els.resetButton.disabled = false;
     els.emptyWave.classList.add("hidden");
   } catch (error) {
+    if (error instanceof LocalJobCancelled) {
+      setStatus("Local analysis cancelled.");
+      setProgress("analyze", 0, "Cancelled");
+      return;
+    }
     console.error(error);
     renderDecodeError(file, "We could not decode this audio file. Try exporting it as WAV or MP3 and upload again.");
+  } finally {
+    finishLocalJob(localJob);
   }
 }
 
@@ -160,21 +229,35 @@ async function runMastering() {
   disableExports();
   els.masterButton.disabled = true;
   els.masterButton.textContent = "Mastering...";
+  const localJob = beginLocalJob("mastering");
 
   try {
     setStatus("Preparing master...");
     setProgress("prepare", 55, "Preparing master");
     await nextFrame();
+    ensureLocalJobActive(localJob);
 
     const controls = readControls();
     setStatus(`Applying ${PRESETS[state.selectedPreset].label} preset...`);
-    setProgress("apply", 70, "Applying mastering preset");
+    setProgress("apply", 68, "Mastering rendering");
     await nextFrame();
+    ensureLocalJobActive(localJob);
 
     state.limiterReductionDb = 0;
     const mastered = await masterBuffer(state.originalBuffer, controls);
+    ensureLocalJobActive(localJob);
     state.masteredBuffer = mastered;
-    state.masteredAnalysis = analyzeAudioBuffer(mastered);
+    setStatus("Analyzing mastered audio...");
+    const masteredResult = await analyzeBufferLocally(mastered, {
+      signal: localJob.controller.signal,
+      onProgress({ progress, message }) {
+        setProgress("preview", Math.max(78, progress), message);
+        setStatus(message);
+      },
+    });
+    ensureLocalJobActive(localJob);
+    state.masteredAnalysis = masteredResult.analysis;
+    state.masteredWaveformPeaks = masteredResult.waveformPeaks;
     state.masterReport = buildMasterReport({
       originalAnalysis: state.analysis,
       masteredAnalysis: state.masteredAnalysis,
@@ -185,11 +268,25 @@ async function runMastering() {
 
     setStatus("Creating preview...");
     setProgress("preview", 84, "Creating preview");
-    await createPreviewUrl(mastered);
+    await createPreviewUrl(mastered, {
+      signal: localJob.controller.signal,
+      onProgress({ progress, message }) {
+        setProgress("preview", progress, message);
+        setStatus(message);
+      },
+    });
+    ensureLocalJobActive(localJob);
 
     setStatus("Preparing downloads...");
-    setProgress("download", 92, "Preparing download");
-    await prepareDownloads(mastered);
+    setProgress("download", 92, "Export encoding");
+    await prepareDownloads(mastered, {
+      signal: localJob.controller.signal,
+      onProgress({ progress, message }) {
+        setProgress("download", progress, message);
+        setStatus(message);
+      },
+    });
+    ensureLocalJobActive(localJob);
 
     els.masteredTab.disabled = false;
     els.compareTab.disabled = false;
@@ -202,13 +299,19 @@ async function runMastering() {
     setStatusBanner(COPY.status.masterReady, "success");
     setStatus(COPY.status.masterReady);
   } catch (error) {
+    if (error instanceof LocalJobCancelled) {
+      setStatus("Local mastering cancelled.");
+      setProgress("prepare", 0, "Cancelled");
+      return;
+    }
     console.error(error);
     setAppPhase("error");
     setStatusBanner(COPY.errors.masterFailed, "error");
     setStatus(COPY.errors.masterFailed);
     setProgress("prepare", 0, "Mastering failed");
   } finally {
-    els.masterButton.disabled = false;
+    finishLocalJob(localJob);
+    els.masterButton.disabled = !state.originalBuffer || !hasAudibleSignal(state.analysis);
     els.masterButton.textContent = "Master file";
   }
 }
@@ -251,6 +354,7 @@ function resetMasterOnly() {
 }
 
 function resetSession(clearInput = true) {
+  cancelLocalJob(false);
   pausePlayback();
   clearStatusBanner();
   cleanupUrls();
@@ -326,6 +430,9 @@ els.dropzone.addEventListener("drop", (event) => {
 });
 
 els.masterButton.addEventListener("click", runMastering);
+if (els.cancelLocalButton) {
+  els.cancelLocalButton.addEventListener("click", () => cancelLocalJob(true));
+}
 els.resetButton.addEventListener("click", resetSession);
 els.playButton.addEventListener("click", togglePlayback);
 els.seekSlider.addEventListener("input", seekPlayback);
@@ -361,6 +468,7 @@ window.addEventListener("resize", () => {
 });
 
 window.addEventListener("pagehide", () => {
+  cancelLocalJob(false);
   cleanupUrls();
   disposeMp3Worker();
   stopServerStatusMonitor();

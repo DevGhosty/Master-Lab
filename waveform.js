@@ -59,7 +59,7 @@ export function drawWaveform() {
     drawDifferenceBand(ctx, state.originalBuffer, state.masteredBuffer, rect);
   } else if (state.activeSource === "mastered" && state.masteredWaveformPeaks) {
     drawPeaksWaveform(ctx, state.masteredWaveformPeaks, rect, "#d98928", 0.9, 0);
-  } else if (state.activeSource === "original" && state.originalWaveformPeaks && !state.originalBuffer) {
+  } else if (state.activeSource === "original" && state.originalWaveformPeaks) {
     drawPeaksWaveform(ctx, state.originalWaveformPeaks, rect, "#0a7b75", 0.9, 0);
   } else {
     const buffer = state.activeSource === "mastered" ? state.masteredBuffer : state.originalBuffer;

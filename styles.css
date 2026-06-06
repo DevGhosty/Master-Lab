@@ -1033,6 +1033,36 @@ input[type="checkbox"] {
   width: 100%;
 }
 
+.progress-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+
+.progress-actions:has(.cancel-local-button:not([hidden])) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-console);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondary-button:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
 .primary-button:not(:disabled):hover,
 .download-button:not(.disabled):hover {
   background: var(--teal-dark);

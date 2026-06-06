@@ -29,6 +29,8 @@ export const state = {
   lastReadiness: null,
   mixAssistant: null,
   masterReport: null,
+  localJob: null,
+  localJobSeq: 0,
 };
 
 export function getAudioContext() {

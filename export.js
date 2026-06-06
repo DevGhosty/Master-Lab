@@ -2,35 +2,34 @@ import { state } from "./state.js";
 import { els, setExportState, updateExportRecommendation } from "./dom.js";
 import { COPY } from "./constants.js";
 import { clamp } from "./utils.js";
+import { encodePreviewLocally, encodeExportsLocally } from "./localAudio.js";
 
-export async function createPreviewUrl(buffer) {
+export async function createPreviewUrl(buffer, options = {}) {
   if (state.masteredPreviewUrl) URL.revokeObjectURL(state.masteredPreviewUrl);
-  const wav = encodeWavFloat32(buffer);
+  const { wav } = await encodePreviewLocally(buffer, options);
   state.masteredPreviewUrl = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
   els.masteredPlayer.src = state.masteredPreviewUrl;
   els.masteredPlayer.load();
 }
 
-export async function prepareDownloads(buffer) {
+export async function prepareDownloads(buffer, options = {}) {
   const baseName = state.fileName || "mastered";
   const wavName = `${baseName}-master-32float.wav`;
   const wav24Name = `${baseName}-master-24bit.wav`;
   const wav16Name = `${baseName}-master-16bit-dithered.wav`;
   const mp3Name = `${baseName}-master-320.mp3`;
+  const wavExports = await encodeExportsLocally(buffer, options);
 
   if (state.wavUrl) URL.revokeObjectURL(state.wavUrl);
-  const wav = encodeWavFloat32(buffer);
-  state.wavUrl = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
+  state.wavUrl = URL.createObjectURL(new Blob([wavExports.wav32], { type: "audio/wav" }));
   enableDownload(els.wavDownloadLink, state.wavUrl, wavName, "Download WAV 32-bit float");
 
   if (state.wav24Url) URL.revokeObjectURL(state.wav24Url);
-  const wav24 = encodeWavPcm(buffer, 24, false);
-  state.wav24Url = URL.createObjectURL(new Blob([wav24], { type: "audio/wav" }));
+  state.wav24Url = URL.createObjectURL(new Blob([wavExports.wav24], { type: "audio/wav" }));
   enableDownload(els.wav24DownloadLink, state.wav24Url, wav24Name, "Download WAV 24-bit PCM");
 
   if (state.wav16Url) URL.revokeObjectURL(state.wav16Url);
-  const wav16 = encodeWavPcm(buffer, 16, true);
-  state.wav16Url = URL.createObjectURL(new Blob([wav16], { type: "audio/wav" }));
+  state.wav16Url = URL.createObjectURL(new Blob([wavExports.wav16], { type: "audio/wav" }));
   enableDownload(els.wav16DownloadLink, state.wav16Url, wav16Name, "Download WAV 16-bit dithered");
 
   if (state.mp3Url) URL.revokeObjectURL(state.mp3Url);
@@ -155,87 +154,6 @@ export function disableExports() {
   setExportState("is-busy");
 }
 
-function encodeWavFloat32(buffer) {
-  const channels = Math.min(buffer.numberOfChannels, 2);
-  const sampleRate = buffer.sampleRate;
-  const bytesPerSample = 4;
-  const blockAlign = channels * bytesPerSample;
-  const dataLength = buffer.length * blockAlign;
-  const wav = new ArrayBuffer(44 + dataLength);
-  const view = new DataView(wav);
-
-  writeString(view, 0, "RIFF");
-  view.setUint32(4, 36 + dataLength, true);
-  writeString(view, 8, "WAVE");
-  writeString(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 3, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 32, true);
-  writeString(view, 36, "data");
-  view.setUint32(40, dataLength, true);
-
-  let offset = 44;
-  for (let i = 0; i < buffer.length; i += 1) {
-    for (let c = 0; c < channels; c += 1) {
-      view.setFloat32(offset, buffer.getChannelData(c)[i], true);
-      offset += bytesPerSample;
-    }
-  }
-  return wav;
-}
-
-function encodeWavPcm(buffer, bitDepth, dither) {
-  const channels = Math.min(buffer.numberOfChannels, 2);
-  const sampleRate = buffer.sampleRate;
-  const bytesPerSample = bitDepth / 8;
-  const blockAlign = channels * bytesPerSample;
-  const dataLength = buffer.length * blockAlign;
-  const wav = new ArrayBuffer(44 + dataLength);
-  const view = new DataView(wav);
-
-  writeString(view, 0, "RIFF");
-  view.setUint32(4, 36 + dataLength, true);
-  writeString(view, 8, "WAVE");
-  writeString(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitDepth, true);
-  writeString(view, 36, "data");
-  view.setUint32(40, dataLength, true);
-
-  let offset = 44;
-  const maxInt = bitDepth === 24 ? 0x7fffff : 0x7fff;
-  const minInt = bitDepth === 24 ? -0x800000 : -0x8000;
-  const ditherScale = dither ? 1 / maxInt : 0;
-  for (let i = 0; i < buffer.length; i += 1) {
-    for (let c = 0; c < channels; c += 1) {
-      // TPDF dither (difference of two uniform randoms) decorrelates 16-bit
-      // quantization error so low-level detail does not gain audible distortion.
-      const noise = dither ? (Math.random() - Math.random()) * ditherScale : 0;
-      const sample = clamp(buffer.getChannelData(c)[i] + noise, -1, 1);
-      const intSample = Math.max(minInt, Math.min(maxInt, Math.round(sample < 0 ? sample * -minInt : sample * maxInt)));
-      if (bitDepth === 24) {
-        view.setUint8(offset, intSample & 0xff);
-        view.setUint8(offset + 1, (intSample >> 8) & 0xff);
-        view.setUint8(offset + 2, (intSample >> 16) & 0xff);
-        offset += 3;
-      } else {
-        view.setInt16(offset, intSample, true);
-        offset += 2;
-      }
-    }
-  }
-  return wav;
-}
-
 function encodeMp3(buffer, kbps) {
   const channels = Math.min(buffer.numberOfChannels, 2);
   const encoder = new window.lamejs.Mp3Encoder(channels, buffer.sampleRate, kbps);
@@ -262,12 +180,6 @@ function floatToInt16(floatData) {
     output[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
   }
   return output;
-}
-
-function writeString(view, offset, value) {
-  for (let i = 0; i < value.length; i += 1) {
-    view.setUint8(offset + i, value.charCodeAt(i));
-  }
 }
 
 export function loadLocalEncoderScript() {
