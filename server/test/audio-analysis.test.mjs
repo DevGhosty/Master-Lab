@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { analyzeAudioBuffer, estimateTruePeakDb } from "../../analysis.js";
-import { analyzeAudioFile, measureIntegratedLoudness, probeAudioFile, runCommand } from "../src/ffmpeg.js";
+import { analyzeAudioFile, masterToFiles, measureIntegratedLoudness, probeAudioFile, runCommand } from "../src/ffmpeg.js";
+import { buildMasterFilter } from "../src/presets.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = path.join(__dirname, ".generated-audio");
@@ -305,5 +306,70 @@ describe("audio analysis fixtures", () => {
 
     assert.ok(reference.input_tp > browser.peakDb, "FFmpeg true peak should exceed sample peak");
     nearly(browser.truePeakDb, reference.input_tp, 0.35, "browser inter-sample true peak vs FFmpeg");
+  });
+
+  test("server analysis and mastering ignore MP3 attached artwork streams", async (t) => {
+    if (skipWithoutFfmpeg(t)) return;
+    const coverPath = path.join(FIXTURE_DIR, "cover.jpg");
+    const mp3Path = path.join(FIXTURE_DIR, "attached-artwork.mp3");
+    const masterDir = path.join(FIXTURE_DIR, "attached-artwork-master");
+    await fs.mkdir(masterDir, { recursive: true });
+
+    await runCommand("ffmpeg", [
+      "-hide_banner",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=red:s=64x64:d=0.1",
+      "-frames:v",
+      "1",
+      "-update",
+      "1",
+      coverPath,
+    ]);
+    await runCommand("ffmpeg", [
+      "-hide_banner",
+      "-y",
+      "-i",
+      fixtures["sine-known-peak"].file,
+      "-i",
+      coverPath,
+      "-map",
+      "0:a:0",
+      "-map",
+      "1:v:0",
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      "320k",
+      "-c:v",
+      "mjpeg",
+      "-disposition:v:0",
+      "attached_pic",
+      "-id3v2_version",
+      "3",
+      mp3Path,
+    ]);
+
+    const probe = await probeAudioFile(mp3Path);
+    const reference = await measureIntegratedLoudness(mp3Path);
+    const server = await analyzeAudioFile(mp3Path);
+    const filter = buildMasterFilter(
+      "warm",
+      { intensity: 0.32, warmth: 0.5, air: 0.5, ceilingDb: -1.2, targetLoudness: -14.8 },
+      server.analysis,
+    );
+    const mastered = await masterToFiles(mp3Path, masterDir, filter, null, {
+      ceilingDb: -1.2,
+      sourceLufs: server.analysis.loudnessDb,
+    });
+
+    assert.equal(probe.codec, "mp3");
+    assert.ok(Number.isFinite(reference.input_i), "artwork MP3 loudness reference");
+    assert.ok(Number.isFinite(reference.input_tp), "artwork MP3 true peak reference");
+    assert.ok(Number.isFinite(server.analysis.crestDb), "artwork MP3 server crest metric");
+    assert.ok(mastered.waveformPeaks.length > 100, "artwork MP3 mastered waveform");
+    assert.ok(Number.isFinite(mastered.masteredAnalysis.truePeakDb), "artwork MP3 mastered true peak");
   });
 });

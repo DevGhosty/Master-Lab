@@ -20,6 +20,16 @@ export function hasAudibleSignal(analysis) {
 /** Repair inconsistent server metrics (e.g. astats peak vs loudnorm true peak). */
 export function normalizeAnalysisMetrics(analysis) {
   if (!analysis) return analysis;
+  if (!Number.isFinite(analysis.peakDb) && Number.isFinite(analysis.peak) && analysis.peak > 0) {
+    analysis.peakDb = linearToDb(analysis.peak);
+  }
+  if (!Number.isFinite(analysis.rmsDb) && Number.isFinite(analysis.rms) && analysis.rms > 0) {
+    analysis.rmsDb = linearToDb(analysis.rms);
+  }
+  if (!Number.isFinite(analysis.truePeakDb) && Number.isFinite(analysis.peakDb)) {
+    analysis.truePeakDb = analysis.peakDb;
+  }
+
   const loud = Number.isFinite(analysis.loudnessDb) && analysis.loudnessDb > -50;
   const hot = Number.isFinite(analysis.truePeakDb) && analysis.truePeakDb > -40;
   const peakBroken =
@@ -35,6 +45,11 @@ export function normalizeAnalysisMetrics(analysis) {
   if ((!Number.isFinite(analysis.rmsDb) || analysis.rmsDb < -60) && loud) {
     analysis.rmsDb = analysis.loudnessDb - 6;
     analysis.rms = dbToLinear(analysis.rmsDb);
+  }
+  if (!Number.isFinite(analysis.peakDb) && Number.isFinite(analysis.rmsDb) && loud) {
+    analysis.peakDb = analysis.rmsDb + 12;
+    analysis.peak = dbToLinear(analysis.peakDb);
+    if (!Number.isFinite(analysis.truePeakDb)) analysis.truePeakDb = analysis.peakDb;
   }
   if (Number.isFinite(analysis.peakDb) && Number.isFinite(analysis.rmsDb)) {
     analysis.crestDb = analysis.peakDb - analysis.rmsDb;

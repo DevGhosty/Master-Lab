@@ -88,6 +88,16 @@ function assistantWarnings(warnings) {
   }));
 }
 
+function mergeAnalysisMetrics(base, incoming) {
+  const merged = { ...(base || {}) };
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (value == null) continue;
+    if (typeof value === "number" && !Number.isFinite(value)) continue;
+    merged[key] = value;
+  }
+  return normalizeAnalysisMetrics(merged);
+}
+
 async function fetchAssistant(payload) {
   if (!isApiMode()) return null;
   try {
@@ -439,16 +449,20 @@ export async function runMasteringViaApi() {
     }
 
     masterJobDone = true;
-    state.masteredAnalysis = job.meta.masteredAnalysis;
-    state.masterReport = job.meta.masterReport || buildMasterReport({
+    const meta = job.meta || {};
+    if (meta.originalAnalysis) {
+      state.analysis = mergeAnalysisMetrics(state.analysis, meta.originalAnalysis);
+    }
+    state.masteredAnalysis = mergeAnalysisMetrics(null, meta.masteredAnalysis);
+    state.masterReport = buildMasterReport({
       originalAnalysis: state.analysis,
       masteredAnalysis: state.masteredAnalysis,
       presetKey: state.selectedPreset,
-      controls: readControls(),
-      limiterReductionDb: job.meta.limiterReductionDb || 0,
+      controls,
+      limiterReductionDb: meta.limiterReductionDb || 0,
     });
-    state.masteredWaveformPeaks = job.meta.waveformPeaks || null;
-    state.limiterReductionDb = job.meta.limiterReductionDb || 0;
+    state.masteredWaveformPeaks = meta.waveformPeaks || null;
+    state.limiterReductionDb = meta.limiterReductionDb || 0;
 
     setStatus("Downloading mastered files...");
     setProgress("download", 92, "Preparing download");

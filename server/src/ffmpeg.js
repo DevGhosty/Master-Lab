@@ -133,8 +133,12 @@ function parsePeakStats(stderr) {
   const overallBlock = stderr.match(/Overall[\s\S]*?(?=\n\[|\n*$)/);
   const haystack = overallBlock ? overallBlock[0] : stderr;
 
-  const peakMatch = haystack.match(/Peak level dB:\s*([-\d.]+)/i);
-  const rmsMatch = haystack.match(/RMS level dB:\s*([-\d.]+)/i);
+  const peakMatch =
+    haystack.match(/Peak level dB:\s*([-\d.]+)/i) ||
+    haystack.match(/lavfi\.astats\.Overall\.Peak_level=([-\d.]+)/i);
+  const rmsMatch =
+    haystack.match(/RMS level dB:\s*([-\d.]+)/i) ||
+    haystack.match(/lavfi\.astats\.Overall\.RMS_level=([-\d.]+)/i);
   if (peakMatch) peakDb = Number(peakMatch[1]);
   if (rmsMatch) rmsDb = Number(rmsMatch[1]);
 
@@ -435,10 +439,11 @@ const ANALYZE_FILTER_COMPLEX = [
 
 /** Fast EBU R128 + astats in separate branches (same decode). */
 async function runMetricsPass(inputPath) {
-  const { code, stderr } = await runCommand("ffmpeg", [
+  const { code, stdout, stderr } = await runCommand("ffmpeg", [
     ...FFMPEG_GLOBAL,
     "-i",
     inputPath,
+    "-vn",
     "-filter_complex",
     METRICS_FILTER_COMPLEX,
     "-map",
@@ -457,21 +462,23 @@ async function runMetricsPass(inputPath) {
       internalMessage: stderr || "Audio analysis failed",
     });
   }
+  const output = `${stderr}\n${stdout}`;
   return {
-    loudness: parseEbur128Summary(stderr),
-    stats: parsePeakStats(stderr),
-    clip: parseClipping(stderr),
-    silence: parseSilence(stderr),
+    loudness: parseEbur128Summary(output),
+    stats: parsePeakStats(output),
+    clip: parseClipping(output),
+    silence: parseSilence(output),
   };
 }
 
 /** One decode: stats + loudness + waveform branches in parallel inside FFmpeg. */
 async function runCombinedAnalyzePass(inputPath, peaksRaw) {
-  const { code, stderr } = await runCommand("ffmpeg", [
+  const { code, stdout, stderr } = await runCommand("ffmpeg", [
     ...FFMPEG_GLOBAL,
     "-y",
     "-i",
     inputPath,
+    "-vn",
     "-filter_complex",
     ANALYZE_FILTER_COMPLEX,
     "-map",
@@ -495,11 +502,12 @@ async function runCombinedAnalyzePass(inputPath, peaksRaw) {
       internalMessage: stderr || "Audio analysis failed",
     });
   }
+  const output = `${stderr}\n${stdout}`;
   return {
-    loudness: parseEbur128Summary(stderr),
-    stats: parsePeakStats(stderr),
-    clip: parseClipping(stderr),
-    silence: parseSilence(stderr),
+    loudness: parseEbur128Summary(output),
+    stats: parsePeakStats(output),
+    clip: parseClipping(output),
+    silence: parseSilence(output),
   };
 }
 
@@ -516,6 +524,9 @@ export async function measureIntegratedLoudness(inputPath) {
     ...FFMPEG_GLOBAL,
     "-i",
     inputPath,
+    "-vn",
+    "-map",
+    "0:a:0",
     "-af",
     "ebur128=peak=true",
     "-f",
@@ -559,6 +570,9 @@ export async function extractWaveformPeaks(inputPath, width = 800) {
     "-y",
     "-i",
     inputPath,
+    "-vn",
+    "-map",
+    "0:a:0",
     "-ac",
     "1",
     "-ar",
@@ -580,6 +594,11 @@ export async function applyGainToFile(filePath, gainDb) {
     "-y",
     "-i",
     filePath,
+    "-vn",
+    "-map",
+    "0:a:0",
+    "-map_metadata",
+    "-1",
     "-af",
     `volume=${gainDb.toFixed(2)}dB`,
     tempPath,
@@ -641,6 +660,9 @@ export async function masterToFiles(inputPath, workDir, filterChain, onProgress,
     "-y",
     "-i",
     inputPath,
+    "-vn",
+    "-map_metadata",
+    "-1",
     "-filter_complex",
     filterComplex,
     "-map",

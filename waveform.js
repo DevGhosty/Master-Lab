@@ -9,11 +9,16 @@ export function updateStats() {
   els.originalPeak.textContent = formatDbtp(state.analysis.truePeakDb);
 
   if (state.masteredAnalysis) {
-    const delta = state.masteredAnalysis.loudnessDb - state.analysis.loudnessDb;
+    const delta = Number.isFinite(state.masteredAnalysis.loudnessDb) && Number.isFinite(state.analysis.loudnessDb)
+      ? state.masteredAnalysis.loudnessDb - state.analysis.loudnessDb
+      : null;
     const limiterText = state.limiterReductionDb < -0.1 ? ` Limiter reduced peaks by up to ${Math.abs(state.limiterReductionDb).toFixed(1)} dB.` : "";
+    const deltaText = Number.isFinite(delta) ? `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} LU` : "-- LU";
+    const originalCrest = Number.isFinite(state.analysis.crestDb) ? `${state.analysis.crestDb.toFixed(1)} dB` : "--";
+    const masteredCrest = Number.isFinite(state.masteredAnalysis.crestDb) ? `${state.masteredAnalysis.crestDb.toFixed(1)} dB` : "--";
     els.masterRms.textContent = formatLufs(state.masteredAnalysis.loudnessDb);
     els.masterPeak.textContent = formatDbtp(state.masteredAnalysis.truePeakDb);
-    els.levelSummary.textContent = `Master is ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} LU from original. Crest: ${state.analysis.crestDb.toFixed(1)} dB → ${state.masteredAnalysis.crestDb.toFixed(1)} dB.${limiterText}`;
+    els.levelSummary.textContent = `Master is ${deltaText} from original. Crest: ${originalCrest} -> ${masteredCrest}.${limiterText}`;
     updatePeakMeter(state.masteredAnalysis.truePeakDb);
   } else {
     els.masterRms.textContent = "--";
@@ -24,7 +29,8 @@ export function updateStats() {
 }
 
 function updatePeakMeter(peakDb) {
-  els.peakMeter.style.width = `${Math.min(100, Math.max(0, (peakDb + 60) * (100 / 60)))}%`;
+  const meterPeak = Number.isFinite(peakDb) ? peakDb : -60;
+  els.peakMeter.style.width = `${Math.min(100, Math.max(0, (meterPeak + 60) * (100 / 60)))}%`;
   els.peakLabel.textContent = formatDbValue(peakDb);
 }
 
