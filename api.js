@@ -493,43 +493,49 @@ export async function runMasteringViaApi() {
     setProgress("download", 92, "Preparing download");
 
     const baseName = state.fileName || "mastered";
-    const previewBlob = await fetchJobFileBlob(state.masterJobId, "preview");
-    if (state.masteredPreviewUrl) URL.revokeObjectURL(state.masteredPreviewUrl);
-    state.masteredPreviewUrl = URL.createObjectURL(previewBlob);
-    els.masteredPlayer.src = state.masteredPreviewUrl;
-    els.masteredPlayer.load();
+    try {
+      const previewBlob = await fetchJobFileBlob(state.masterJobId, "preview");
+      if (state.masteredPreviewUrl) URL.revokeObjectURL(state.masteredPreviewUrl);
+      state.masteredPreviewUrl = URL.createObjectURL(previewBlob);
+      els.masteredPlayer.src = state.masteredPreviewUrl;
+      els.masteredPlayer.load();
 
-    const wav32Blob = await fetchJobFileBlob(state.masterJobId, "wav32");
-    const wav24Blob = await fetchJobFileBlob(state.masterJobId, "wav24");
-    const wav16Blob = await fetchJobFileBlob(state.masterJobId, "wav16");
-    const mp3Blob = await fetchJobFileBlob(state.masterJobId, "mp3");
+      const wav32Blob = await fetchJobFileBlob(state.masterJobId, "wav32");
+      const wav24Blob = await fetchJobFileBlob(state.masterJobId, "wav24");
+      const wav16Blob = await fetchJobFileBlob(state.masterJobId, "wav16");
+      const mp3Blob = await fetchJobFileBlob(state.masterJobId, "mp3");
 
-    if (state.wavUrl) URL.revokeObjectURL(state.wavUrl);
-    if (state.wav24Url) URL.revokeObjectURL(state.wav24Url);
-    if (state.wav16Url) URL.revokeObjectURL(state.wav16Url);
-    if (state.mp3Url) URL.revokeObjectURL(state.mp3Url);
+      if (state.wavUrl) URL.revokeObjectURL(state.wavUrl);
+      if (state.wav24Url) URL.revokeObjectURL(state.wav24Url);
+      if (state.wav16Url) URL.revokeObjectURL(state.wav16Url);
+      if (state.mp3Url) URL.revokeObjectURL(state.mp3Url);
 
-    state.wavUrl = URL.createObjectURL(wav32Blob);
-    state.wav24Url = URL.createObjectURL(wav24Blob);
-    state.wav16Url = URL.createObjectURL(wav16Blob);
-    state.mp3Url = URL.createObjectURL(mp3Blob);
+      state.wavUrl = URL.createObjectURL(wav32Blob);
+      state.wav24Url = URL.createObjectURL(wav24Blob);
+      state.wav16Url = URL.createObjectURL(wav16Blob);
+      state.mp3Url = URL.createObjectURL(mp3Blob);
+
+      enableDownload(els.wavDownloadLink, state.wavUrl, `${baseName}-master-32float.wav`, "Download WAV 32-bit float");
+      enableDownload(els.wav24DownloadLink, state.wav24Url, `${baseName}-master-24bit.wav`, "Download WAV 24-bit PCM");
+      enableDownload(els.wav16DownloadLink, state.wav16Url, `${baseName}-master-16bit-dithered.wav`, "Download WAV 16-bit dithered");
+      enableDownload(els.mp3DownloadLink, state.mp3Url, `${baseName}-master-320.mp3`, "Download MP3 320");
+      els.encoderStatus.textContent = COPY.encoder.server;
+    } catch (downloadError) {
+      console.warn("Async job files were not reachable; falling back to same-request ZIP render.", downloadError);
+      await prepareSyncZipDownload(controls, baseName);
+    }
     downloadsReady = true;
-
-    enableDownload(els.wavDownloadLink, state.wavUrl, `${baseName}-master-32float.wav`, "Download WAV 32-bit float");
-    enableDownload(els.wav24DownloadLink, state.wav24Url, `${baseName}-master-24bit.wav`, "Download WAV 24-bit PCM");
-    enableDownload(els.wav16DownloadLink, state.wav16Url, `${baseName}-master-16bit-dithered.wav`, "Download WAV 16-bit dithered");
-    enableDownload(els.mp3DownloadLink, state.mp3Url, `${baseName}-master-320.mp3`, "Download MP3 320");
-    els.encoderStatus.textContent = COPY.encoder.server;
     els.exportText.textContent = COPY.export.ready;
     setExportState("is-ready");
     updateExportRecommendation();
 
-    els.masteredTab.disabled = false;
-    els.compareTab.disabled = false;
-    els.volumeMatchToggle.disabled = false;
+    const hasPreview = Boolean(state.masteredPreviewUrl);
+    els.masteredTab.disabled = !hasPreview;
+    els.compareTab.disabled = !hasPreview;
+    els.volumeMatchToggle.disabled = !hasPreview;
     updateStats();
     renderMasterReport(state.masterReport);
-    setPlaybackSource("mastered", false);
+    setPlaybackSource(hasPreview ? "mastered" : "original", false);
     setProgress("done", 100, "Master ready");
     setAppPhase("mastered");
     setStatusBanner(COPY.status.masterReady, "success");
@@ -593,4 +599,37 @@ async function fetchJobFileBlob(jobId, kind) {
     await wait(replicaRetryDelay(attempt));
   }
   throw new Error(lastPayload?.error || `Could not download ${kind}`);
+}
+
+async function prepareSyncZipDownload(controls, baseName) {
+  setStatus("Preparing a same-request ZIP export...");
+  setProgress("download", 94, "Rendering ZIP fallback");
+  const response = await fetchWithTimeout(
+    `${getApiBase()}/api/master`,
+    {
+      method: "POST",
+      body: buildMasterJobForm(controls, false),
+    },
+    API_MASTER_DOWNLOAD_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Could not prepare ZIP download");
+  }
+  const zipBlob = await response.blob();
+  if (state.wavUrl) URL.revokeObjectURL(state.wavUrl);
+  if (state.wav24Url) URL.revokeObjectURL(state.wav24Url);
+  if (state.wav16Url) URL.revokeObjectURL(state.wav16Url);
+  if (state.mp3Url) URL.revokeObjectURL(state.mp3Url);
+
+  state.wavUrl = URL.createObjectURL(zipBlob);
+  state.wav24Url = null;
+  state.wav16Url = null;
+  state.mp3Url = null;
+  enableDownload(els.wavDownloadLink, state.wavUrl, `${baseName}-master-export.zip`, "Download master ZIP");
+  disableDownload(els.wav24DownloadLink, "Included in ZIP");
+  disableDownload(els.wav16DownloadLink, "Included in ZIP");
+  disableDownload(els.mp3DownloadLink, "Included in ZIP");
+  els.encoderStatus.textContent = "Server export is ready as a ZIP because free hosting routed download files across replicas.";
+  els.exportText.textContent = "Your master is ready as a ZIP export.";
 }
