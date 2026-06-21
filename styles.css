@@ -1806,3 +1806,889 @@ input[type="checkbox"] {
     animation-duration: 0.001ms !important;
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Master Lab workspace revision                                               */
+/* -------------------------------------------------------------------------- */
+
+:root {
+  --bg: #060908;
+  --bg-soft: #0a0f0e;
+  --panel: #0d1412;
+  --panel-2: #111a17;
+  --panel-3: #080d0c;
+  --surface-console: #030706;
+  --surface-export: #0a100e;
+  --surface-raised: #131e1a;
+  --line: #22312d;
+  --line-strong: #385047;
+  --ink: #edf7f3;
+  --muted: #9aa9a4;
+  --muted-2: #72817c;
+  --teal: #35d3e4;
+  --teal-dark: #8cebf2;
+  --amber: #f1aa37;
+  --good: #64d9a6;
+  --danger: #f0776a;
+  --shadow-panel: 0 16px 42px rgba(0, 0, 0, 0.28);
+  --radius-md: 8px;
+  --radius-lg: 8px;
+}
+
+body {
+  background:
+    linear-gradient(180deg, rgba(15, 28, 25, 0.55), transparent 18rem),
+    var(--bg);
+  letter-spacing: 0;
+}
+
+button,
+a,
+input,
+summary {
+  min-width: 0;
+}
+
+.app-shell {
+  width: min(100%, 1680px);
+  margin: 0 auto;
+  padding: 16px clamp(12px, 2vw, 28px) 32px;
+}
+
+.topbar {
+  align-items: center;
+  max-width: none;
+  min-width: 0;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(10, 16, 14, 0.94);
+  box-shadow: none;
+}
+
+.brand-row {
+  gap: 12px 18px;
+}
+
+.brand-block {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  align-items: center;
+}
+
+.brand-block::before {
+  width: 25px;
+  height: 21px;
+  border-inline: 3px solid var(--teal);
+  border-radius: 2px;
+  box-shadow:
+    7px 4px 0 -2px var(--teal),
+    14px -3px 0 -2px var(--teal);
+  content: "";
+}
+
+.brand-block h1 {
+  font-size: clamp(1.25rem, 2vw, 1.7rem);
+  line-height: 1;
+}
+
+.trust-line {
+  grid-column: 2;
+  margin-top: 3px;
+}
+
+.topbar-status {
+  max-width: 66ch;
+}
+
+#statusText,
+.status-banner,
+.section-heading p,
+.wave-header p,
+.export-box p,
+.helper-text,
+.source-verdict-summary,
+.warning-item span,
+.assistant-panel p,
+.master-report p {
+  overflow-wrap: anywhere;
+}
+
+.reset-button {
+  min-width: 44px;
+  padding-inline: 12px;
+  border-color: var(--line-strong);
+  background: var(--panel-3);
+}
+
+.workflow-ribbon {
+  display: flex;
+  max-width: none;
+  min-width: 0;
+  margin-bottom: 16px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: #09100e;
+  box-shadow: none;
+}
+
+.workspace {
+  grid-template-columns: minmax(250px, 292px) minmax(0, 1fr) minmax(250px, 294px);
+  gap: clamp(12px, 1.4vw, 22px);
+  max-width: none;
+  align-items: start;
+}
+
+.panel,
+.center-stage {
+  min-width: 0;
+  border-color: var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel);
+}
+
+.panel {
+  padding: 16px;
+}
+
+.input-panel,
+.meters-panel {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  gap: 18px;
+  overflow: visible;
+}
+
+.input-panel {
+  position: relative;
+}
+
+.input-panel > .flow-section,
+.input-panel > .mastering-controls {
+  min-width: 0;
+}
+
+.panel-divider {
+  margin: 0;
+  background: color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.section-heading {
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.section-heading h2,
+.center-stage h2,
+.export-box h2 {
+  font-size: 0.98rem;
+}
+
+.step-number {
+  width: 24px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, var(--teal) 72%, var(--line));
+  background: transparent;
+  color: var(--teal-dark);
+}
+
+.dropzone {
+  min-height: 118px;
+  border-radius: 7px;
+  background: #070c0b;
+}
+
+.dropzone.has-file {
+  padding: 12px;
+}
+
+.drop-icon,
+.empty-state-icon {
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--teal) 11%, transparent);
+}
+
+.workflow-steps {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.workflow-steps li {
+  min-width: 0;
+  min-height: 36px;
+  padding: 5px;
+  justify-content: center;
+  font-size: 0.67rem;
+  text-align: center;
+}
+
+.workflow-steps li span {
+  display: none;
+}
+
+.analysis-placeholder {
+  padding: 12px;
+  border-radius: 7px;
+}
+
+.analysis-card.is-ready {
+  padding: 10px;
+  margin: -4px;
+}
+
+.source-verdict,
+.preset-recommendation,
+.assistant-panel,
+.master-report,
+.panel-subsection,
+.progress-section,
+.export-box {
+  border-radius: 7px;
+}
+
+.warning-list {
+  max-height: none;
+  overflow: visible;
+  mask-image: none;
+}
+
+.analysis-grid,
+.stat-grid,
+.master-report-grid {
+  gap: 7px;
+}
+
+.analysis-grid div,
+.stat-grid div,
+.master-report-grid div {
+  min-width: 0;
+  min-height: 0;
+  padding: 10px;
+  border-radius: 6px;
+}
+
+.preset-grid {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.preset-button {
+  position: relative;
+  min-height: 0;
+  padding: 10px 34px 10px 11px;
+  border-radius: 6px;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.preset-button::after {
+  position: absolute;
+  inset: 50% 12px auto auto;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--muted-2);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  content: "";
+}
+
+.preset-button.active {
+  box-shadow: inset 3px 0 0 var(--teal), 0 8px 20px rgba(0, 0, 0, 0.18);
+}
+
+.preset-button.active::after {
+  border-color: var(--teal);
+  background: var(--teal);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 16%, transparent);
+  animation: preset-signal 1.8s ease-in-out infinite;
+}
+
+.preset-button span {
+  display: none;
+}
+
+.tuning-details {
+  display: grid;
+  gap: 10px;
+}
+
+.tuning-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 0 2px;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tuning-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.tuning-details summary::after {
+  margin-left: 8px;
+  color: var(--muted);
+  content: "+";
+}
+
+.tuning-details[open] summary::after {
+  content: "-";
+}
+
+.tuning-details output {
+  margin-left: auto;
+  color: var(--teal-dark);
+}
+
+.tuning-details .panel-subsection {
+  gap: 12px;
+  padding: 12px;
+}
+
+.progress-section {
+  margin-top: 0;
+  padding: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--teal) 9%, var(--surface-raised)), var(--surface-raised));
+}
+
+.progress-track {
+  height: 8px;
+}
+
+.primary-button,
+.download-button {
+  min-height: 48px;
+  border-radius: 7px;
+}
+
+.primary-button {
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--teal) 20%, transparent);
+}
+
+.app-shell[data-phase="mastering"] .primary-button,
+.app-shell[data-phase="loaded"] .primary-button:not(:disabled) {
+  animation: command-glow 1.4s ease-in-out infinite;
+}
+
+.center-stage {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(300px, 46vh) auto auto;
+  overflow: clip;
+  background: var(--panel);
+}
+
+.wave-header {
+  gap: 16px;
+  padding: 16px 18px;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.wave-header > div:first-child {
+  min-width: 0;
+}
+
+.console-label {
+  color: var(--teal-dark);
+}
+
+.preview-actions {
+  min-width: min(280px, 42%);
+  max-width: 100%;
+}
+
+.app-shell[data-phase="empty"] .preview-help,
+.app-shell[data-phase="empty"] .compare-toggle,
+.app-shell[data-phase="empty"] #volumeMatchHint,
+.app-shell[data-phase="loaded"] .preview-help,
+.app-shell[data-phase="loaded"] .compare-toggle,
+.app-shell[data-phase="loaded"] #volumeMatchHint,
+.app-shell[data-phase="analyzed"] .preview-help,
+.app-shell[data-phase="analyzed"] #volumeMatchHint {
+  display: none;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 100%;
+  min-width: 0;
+  border-radius: 6px;
+  background: #070c0b;
+}
+
+.segmented button {
+  min-width: 0;
+  min-height: 38px;
+  transition: color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.segmented button.active {
+  background: color-mix(in srgb, var(--teal) 12%, var(--panel));
+  color: var(--teal-dark);
+  box-shadow: inset 0 -2px 0 var(--teal);
+}
+
+.waveform-wrap {
+  min-height: 0;
+  height: auto;
+  aspect-ratio: 16 / 7;
+  background:
+    linear-gradient(90deg, rgba(53, 211, 228, 0.035) 1px, transparent 1px) 0 0 / 14% 100%,
+    linear-gradient(0deg, rgba(53, 211, 228, 0.035) 1px, transparent 1px) 0 0 / 100% 25%,
+    var(--surface-console);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), inset 0 -72px 100px rgba(53, 211, 228, 0.045);
+}
+
+.playhead {
+  width: 2px;
+  background: var(--teal);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--teal) 75%, transparent);
+}
+
+.playhead.visible {
+  animation: playhead-pulse 1.2s ease-in-out infinite;
+}
+
+.empty-wave {
+  padding: clamp(20px, 4vw, 44px);
+}
+
+.wave-legend {
+  padding: 10px 18px;
+  background: #0a0f0e;
+}
+
+.transport {
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 18px;
+}
+
+.transport-button {
+  min-width: 48px;
+  min-height: 44px;
+  border-color: color-mix(in srgb, var(--teal) 42%, var(--line));
+  color: var(--teal-dark);
+}
+
+.meters-panel {
+  overflow: visible;
+}
+
+.meters-panel > .flow-section:first-child {
+  gap: 14px;
+}
+
+.meter {
+  height: 12px;
+  border-radius: 3px;
+}
+
+.meter-fill {
+  box-shadow: 10px 0 20px color-mix(in srgb, var(--teal) 28%, transparent);
+  transition: width 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.export-box {
+  margin-top: 0;
+  padding: 14px;
+  border-color: color-mix(in srgb, var(--amber) 27%, var(--line));
+}
+
+.export-box.is-ready {
+  animation: export-ready 560ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.download-button {
+  background: var(--amber);
+  color: #171005;
+}
+
+.download-button.secondary {
+  min-height: 40px;
+  background: var(--panel-3);
+}
+
+.app-shell[data-phase="analyzed"] .analysis-card,
+.app-shell[data-phase="mastering"] .progress-section,
+.app-shell[data-phase="mastered"] .master-report,
+.app-shell[data-phase="mastered"] .export-box {
+  animation: panel-arrive 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes panel-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes command-glow {
+  0%,
+  100% {
+    box-shadow: 0 10px 26px color-mix(in srgb, var(--teal) 16%, transparent);
+  }
+  50% {
+    box-shadow: 0 12px 34px color-mix(in srgb, var(--teal) 40%, transparent);
+  }
+}
+
+@keyframes preset-signal {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 15%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--teal) 4%, transparent);
+  }
+}
+
+@keyframes playhead-pulse {
+  50% {
+    opacity: 0.58;
+  }
+}
+
+@keyframes export-ready {
+  0% {
+    transform: translateY(8px) scale(0.985);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-areas:
+      "input preview"
+      "meters meters";
+    grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  }
+
+  .meters-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.85fr);
+    align-items: start;
+  }
+
+  .meters-panel > .flow-section,
+  .meters-panel > .master-report,
+  .meters-panel > .export-box {
+    min-width: 0;
+  }
+
+  .meters-panel > .export-box {
+    grid-column: 2;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 1380px) {
+  .wave-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .preview-actions {
+    width: auto;
+    inline-size: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .segmented {
+    width: auto;
+    max-width: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 8px 12px 24px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding: 12px;
+  }
+
+  .topbar-main {
+    gap: 8px;
+  }
+
+  .brand-block h1 {
+    font-size: 1.1rem;
+  }
+
+  .trust-line,
+  .topbar-status {
+    display: none;
+  }
+
+  .mode-pill {
+    padding: 3px 7px;
+  }
+
+  .reset-button .reset-label {
+    display: none;
+  }
+
+  .workflow-ribbon {
+    position: static;
+    z-index: auto;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    box-shadow: none;
+  }
+
+  .workspace {
+    display: grid;
+    grid-template-areas: none;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto auto;
+    grid-auto-flow: row;
+    gap: 14px;
+  }
+
+  .input-panel {
+    display: contents;
+  }
+
+  .input-panel > .flow-section,
+  .input-panel > .mastering-controls,
+  .input-panel > .tuning-details,
+  .progress-section,
+  .center-stage,
+  .meters-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .input-panel > .flow-section,
+  .input-panel > .mastering-controls,
+  .input-panel > .panel-divider,
+  .center-stage,
+  .meters-panel {
+    grid-column: 1 / -1;
+    grid-area: auto;
+  }
+
+  .input-panel > .flow-section,
+  .input-panel > .mastering-controls,
+  .input-panel > .tuning-details {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .input-panel > .flow-section:first-child {
+    grid-row: 1;
+  }
+
+  .center-stage {
+    grid-row: 2;
+    grid-template-rows: auto minmax(180px, auto) auto auto;
+  }
+
+  .analysis-placeholder,
+  .analysis-card {
+    grid-row: 3;
+  }
+
+  .input-panel > .mastering-controls {
+    grid-row: 4;
+  }
+
+  .input-panel > .progress-section {
+    grid-row: 5;
+  }
+
+  .meters-panel {
+    grid-row: 6;
+  }
+
+  .panel-divider {
+    display: none;
+  }
+
+  .center-stage,
+  .progress-section,
+  .meters-panel {
+    padding: 12px;
+  }
+
+  .wave-header {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .wave-header h2 {
+    font-size: 1rem;
+  }
+
+  .preview-actions {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .preview-help,
+  #volumeMatchHint {
+    display: none;
+  }
+
+  .waveform-wrap {
+    min-height: 180px;
+    aspect-ratio: 16 / 8;
+  }
+
+  .empty-wave {
+    padding: 16px;
+  }
+
+  .empty-state {
+    gap: 6px;
+  }
+
+  .empty-wave .empty-wave-next,
+  .empty-wave .empty-steps {
+    display: none;
+  }
+
+  .empty-state-icon {
+    width: 46px;
+    height: 46px;
+    font-size: 1.2rem;
+    line-height: 46px;
+  }
+
+  .empty-state p {
+    font-size: 0.78rem;
+  }
+
+  .wave-legend {
+    padding: 9px 12px;
+  }
+
+  .transport {
+    padding: 10px 12px;
+  }
+
+  .preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .preset-button {
+    min-height: 62px;
+    padding: 10px 24px 10px 10px;
+  }
+
+  .preset-button strong {
+    line-height: 1.2;
+  }
+
+  .workflow-steps {
+    display: none;
+  }
+
+  .analysis-grid,
+  .stat-grid,
+  .master-report-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .meters-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .meters-panel > .export-box {
+    grid-column: auto;
+  }
+
+  .server-status-bar {
+    padding: 10px;
+  }
+}
+
+@media (max-width: 390px) {
+  .app-shell {
+    padding-inline: 8px;
+  }
+
+  .topbar {
+    padding: 10px;
+  }
+
+  .brand-block::before {
+    width: 20px;
+  }
+
+  .workflow-ribbon-label {
+    display: none;
+  }
+
+  .segmented button {
+    font-size: 0.7rem;
+  }
+
+  .preset-grid,
+  .analysis-grid,
+  .stat-grid,
+  .master-report-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .preset-button {
+    min-height: 46px;
+  }
+
+  .waveform-wrap {
+    min-height: 164px;
+  }
+
+  .center-stage {
+    grid-template-rows: auto minmax(164px, auto) auto auto;
+  }
+
+  .time-readout {
+    grid-template-columns: 34px minmax(0, 1fr) 34px;
+    gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preset-button.active::after,
+  .app-shell[data-phase="mastering"] .primary-button,
+  .app-shell[data-phase="loaded"] .primary-button:not(:disabled),
+  .playhead.visible,
+  .export-box.is-ready,
+  .app-shell[data-phase="analyzed"] .analysis-card,
+  .app-shell[data-phase="mastering"] .progress-section,
+  .app-shell[data-phase="mastered"] .master-report,
+  .app-shell[data-phase="mastered"] .export-box {
+    animation: none;
+  }
+}

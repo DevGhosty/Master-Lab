@@ -187,28 +187,30 @@
             </div>
           </section>
 
-          <section class="flow-section panel-subsection" aria-label="Fine tune controls">
-            <div class="group-title">
+          <details class="tuning-details" open>
+            <summary>
               <span>Fine tune</span>
               <output id="intensityOutput">42%</output>
-            </div>
-            <label class="range-row">
-              <span>Intensity</span>
-              <input id="intensitySlider" type="range" min="0" max="100" value="42" disabled />
-            </label>
-            <label class="range-row">
-              <span>Warmth</span>
-              <input id="warmthSlider" type="range" min="0" max="100" value="50" disabled />
-            </label>
-            <label class="range-row">
-              <span>Air</span>
-              <input id="airSlider" type="range" min="0" max="100" value="50" disabled />
-            </label>
-            <label class="toggle-row">
-              <input id="trimSilenceToggle" type="checkbox" checked disabled />
-              <span>Trim leading silence</span>
-            </label>
-          </section>
+            </summary>
+            <section class="flow-section panel-subsection" aria-label="Fine tune controls">
+              <label class="range-row">
+                <span>Intensity</span>
+                <input id="intensitySlider" type="range" min="0" max="100" value="42" disabled />
+              </label>
+              <label class="range-row">
+                <span>Warmth</span>
+                <input id="warmthSlider" type="range" min="0" max="100" value="50" disabled />
+              </label>
+              <label class="range-row">
+                <span>Air</span>
+                <input id="airSlider" type="range" min="0" max="100" value="50" disabled />
+              </label>
+              <label class="toggle-row">
+                <input id="trimSilenceToggle" type="checkbox" checked disabled />
+                <span>Trim leading silence</span>
+              </label>
+            </section>
+          </details>
           </div>
 
           <div class="panel-divider" aria-hidden="true"></div>
