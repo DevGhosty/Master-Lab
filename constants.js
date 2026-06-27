@@ -37,8 +37,8 @@ export const COPY = {
     server: "Server analysis and mastering—upload a track to get started.",
   },
   status: {
-    idle: "Upload audio to run an original audio check.",
-    serverIdle: "Upload audio for server-side analysis (processed and deleted immediately).",
+    idle: "Upload your mix, get a measured master, compare, export.",
+    serverIdle: "Upload your mix, get a measured server master, compare, export.",
     analysisDone: "Original audio check complete. Choose a preset and master when ready.",
     analysisDoneServer: "Original audio check complete. Choose a preset and master when ready.",
     readyToMaster: "Ready to master",
@@ -97,7 +97,7 @@ export const COPY = {
     },
     analysisPlaceholder: {
       empty:
-        "Runs automatically after upload—we check loudness, peaks, and common issues before you master.",
+        "Runs automatically after upload: loudness, peaks, clipping, silence, and format checks.",
       loaded: "Checking your file now. Results will appear here in a moment.",
     },
     nextByPhase: {

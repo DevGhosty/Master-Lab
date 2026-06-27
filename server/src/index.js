@@ -301,6 +301,11 @@ async function streamZip(files, meta, res) {
   await archive.finalize();
 }
 
+function optionalNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 app.post("/api/master", uploadRateLimit, upload.single("file"), async (req, res) => {
   const uploadPath = req.file?.path;
   const preset = req.body?.preset || "streaming";
@@ -313,6 +318,7 @@ app.post("/api/master", uploadRateLimit, upload.single("file"), async (req, res)
     intensity: Number(req.body?.intensity),
     warmth: Number(req.body?.warmth),
     air: Number(req.body?.air),
+    bass: optionalNumber(req.body?.bass),
     trimSilence: req.body?.trimSilence === "true" || req.body?.trimSilence === true,
     targetLoudness: Number(req.body?.targetLoudness),
     ceilingDb: Number(req.body?.ceilingDb),
@@ -408,6 +414,7 @@ app.post("/api/master/jobs", uploadRateLimit, upload.single("file"), async (req,
     intensity: Number(req.body?.intensity),
     warmth: Number(req.body?.warmth),
     air: Number(req.body?.air),
+    bass: optionalNumber(req.body?.bass),
     trimSilence: req.body?.trimSilence === "true" || req.body?.trimSilence === true,
     targetLoudness: Number(req.body?.targetLoudness),
     ceilingDb: Number(req.body?.ceilingDb),

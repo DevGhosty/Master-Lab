@@ -105,6 +105,7 @@ function appendMasterControls(form, controls) {
   form.append("intensity", String(controls.intensity));
   form.append("warmth", String(controls.warmth));
   form.append("air", String(controls.air));
+  form.append("bass", String(controls.bass));
   form.append("trimSilence", controls.trimSilence ? "true" : "false");
   if (Number.isFinite(controls.targetLoudness)) {
     form.append("targetLoudness", String(controls.targetLoudness));

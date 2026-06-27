@@ -58,6 +58,8 @@ export const els = {
   intensityOutput: document.querySelector("#intensityOutput"),
   warmthSlider: document.querySelector("#warmthSlider"),
   airSlider: document.querySelector("#airSlider"),
+  bassSlider: document.querySelector("#bassSlider"),
+  bassOutput: document.querySelector("#bassOutput"),
   trimSilenceToggle: document.querySelector("#trimSilenceToggle"),
   progressLabel: document.querySelector("#progressLabel"),
   progressPercent: document.querySelector("#progressPercent"),
@@ -310,6 +312,7 @@ export function setMasteringControlsLocked(locked) {
   if (els.intensitySlider) els.intensitySlider.disabled = locked;
   if (els.warmthSlider) els.warmthSlider.disabled = locked;
   if (els.airSlider) els.airSlider.disabled = locked;
+  if (els.bassSlider) els.bassSlider.disabled = locked;
   if (els.trimSilenceToggle) els.trimSilenceToggle.disabled = locked;
 }
 
@@ -510,7 +513,7 @@ export function readControls() {
     intensity: Number(els.intensitySlider.value) / 100,
     warmth: Number(els.warmthSlider.value) / 100,
     air: Number(els.airSlider.value) / 100,
-    bass: preset.bass,
+    bass: Number(els.bassSlider?.value ?? Math.round((preset.bass + 0.5) * 100)) / 100 - 0.5,
     ceilingDb: getAdaptiveCeiling(preset),
     targetLoudness: getAdaptiveTarget(preset),
     sourceLoudnessDb: state.analysis?.loudnessDb ?? null,
@@ -520,6 +523,10 @@ export function readControls() {
 
 export function updateControlOutputs() {
   els.intensityOutput.textContent = `${els.intensitySlider.value}%`;
+  if (els.bassOutput && els.bassSlider) {
+    const bassValue = Number(els.bassSlider.value) - 50;
+    els.bassOutput.textContent = `${bassValue > 0 ? "+" : ""}${bassValue}%`;
+  }
 }
 
 export function selectPreset(key, applyDefaults = true) {
@@ -536,6 +543,9 @@ export function selectPreset(key, applyDefaults = true) {
     els.intensitySlider.value = Math.round(preset.intensity * 100).toString();
     els.warmthSlider.value = Math.round(preset.warmth * 100).toString();
     els.airSlider.value = Math.round(preset.air * 100).toString();
+    if (els.bassSlider) {
+      els.bassSlider.value = Math.round((preset.bass + 0.5) * 100).toString();
+    }
     updateControlOutputs();
   }
 }

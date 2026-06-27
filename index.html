@@ -98,7 +98,7 @@
             <div class="section-heading">
               <span class="step-number">2</span>
               <div>
-                <h2>Original audio check</h2>
+                <h2>Source check</h2>
                 <p id="analysisPlaceholderCopy">
                   Runs automatically after upload—we check loudness, peaks, and common issues before you master.
                 </p>
@@ -110,7 +110,7 @@
             <div class="section-heading">
               <span class="step-number">2</span>
               <div>
-                <h2>Original audio check</h2>
+                <h2>Source check</h2>
                 <p id="readinessCopy">Analysis appears after upload.</p>
               </div>
             </div>
@@ -202,8 +202,13 @@
                 <input id="warmthSlider" type="range" min="0" max="100" value="50" disabled />
               </label>
               <label class="range-row">
-                <span>Air</span>
+                <span>Clarity / Air</span>
                 <input id="airSlider" type="range" min="0" max="100" value="50" disabled />
+              </label>
+              <label class="range-row">
+                <span>Bass</span>
+                <output id="bassOutput">0%</output>
+                <input id="bassSlider" type="range" min="0" max="100" value="50" disabled />
               </label>
               <label class="toggle-row">
                 <input id="trimSilenceToggle" type="checkbox" checked disabled />

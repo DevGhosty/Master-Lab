@@ -454,6 +454,9 @@ els.volumeMatchToggle.addEventListener("change", () => {
   applyPreviewVolume();
 });
 els.intensitySlider.addEventListener("input", updateControlOutputs);
+els.warmthSlider.addEventListener("input", updateControlOutputs);
+els.airSlider.addEventListener("input", updateControlOutputs);
+if (els.bassSlider) els.bassSlider.addEventListener("input", updateControlOutputs);
 els.presetButtons.forEach((button) => {
   button.addEventListener("click", () => selectPreset(button.dataset.preset));
 });
